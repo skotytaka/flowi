@@ -20,13 +20,16 @@ import androidx.compose.ui.unit.sp
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
 // Every dialog owns its inputs and commits changes through the AppState
-// mutation functions in Models.kt, so screens only need to open/close them.
+// mutation functions in Models.kt. v0.9: dates are picked with the calendar
+// (DateField), never typed; the category mode selector is the new square
+// segmented control; the quick-add expense dialog lists categories in the
+// user's own order and preselects the top one.
 
 @Composable
 fun IncomeDialog(state: AppState, tr: Map<String, String>, th: AppThemeData, onDismiss: () -> Unit) {
     var source    by remember { mutableStateOf("") }
     var amountStr by remember { mutableStateOf("") }
-    var dateStr   by remember { mutableStateOf("") }
+    var dateStr   by remember { mutableStateOf("") }          // "" = today
     AlertDialog(
         onDismissRequest = onDismiss,
         title  = { Text(t(tr,"add_income"), color = th.fg, fontWeight = FontWeight.Bold) },
@@ -45,19 +48,16 @@ fun IncomeDialog(state: AppState, tr: Map<String, String>, th: AppThemeData, onD
                     singleLine = true, colors = otfColors(th),
                     shape = RoundedCornerShape(12.dp)
                 )
-                OutlinedTextField(
-                    value = dateStr, onValueChange = { dateStr = it },
-                    label = { Text(t(tr,"enter_date")) },
-                    singleLine = true, colors = otfColors(th),
-                    shape = RoundedCornerShape(12.dp)
-                )
+                DateField(
+                    value = dateStr, label = t(tr,"date"),
+                    langCode = state.language, th = th, tr = tr
+                ) { dateStr = it }
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                val amt  = amountStr.toDoubleOrNull() ?: 0.0
-                val date = if (dateStr.isBlank() || parseDate(dateStr) == null) todayStr() else dateStr
-                state.recordIncome(source, amt, date)
+                val amt = amountStr.toDoubleOrNull() ?: 0.0
+                state.recordIncome(source, amt, dateStr)   // recordIncome normalizes "" -> today
                 onDismiss()
             }) { Text(t(tr,"ok"), color = th.accent, fontWeight = FontWeight.SemiBold) }
         },
@@ -76,6 +76,7 @@ fun CategoryDialog(
     state: AppState,
     tr: Map<String, String>,
     th: AppThemeData,
+    sym: String,
     onDismiss: () -> Unit
 ) {
     val existing = editName?.let { state.categories[it] }
@@ -100,30 +101,29 @@ fun CategoryDialog(
                     singleLine = true, colors = otfColors(th),
                     shape = RoundedCornerShape(12.dp)
                 )
+                Text(t(tr,"mode"), fontSize = 12.sp, color = th.fg.copy(alpha = 0.6f))
+                SquareSegmented(
+                    options = listOf(
+                        "percentage" to t(tr,"percentage"),
+                        "monthly"    to t(tr,"monthly"),
+                        "annual"     to t(tr,"annual")
+                    ),
+                    selectedKey = mode,
+                    th = th
+                ) { mode = it }
                 OutlinedTextField(
                     value = valueStr, onValueChange = { valueStr = it },
                     label = { Text(t(tr,"category_value")) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true, colors = otfColors(th),
-                    shape = RoundedCornerShape(12.dp)
-                )
-                Text(t(tr,"mode"), fontSize = 12.sp, color = th.fg.copy(alpha = 0.6f))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    listOf(
-                        "percentage" to t(tr,"percentage"),
-                        "monthly"    to t(tr,"monthly"),
-                        "annual"     to t(tr,"annual")
-                    ).forEach { (m, lbl) ->
-                        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = mode == m,
-                                onClick  = { mode = m },
-                                colors   = RadioButtonDefaults.colors(selectedColor = th.accent)
-                            )
-                            Text(lbl, fontSize = 11.sp, color = th.fg)
-                        }
+                    shape = RoundedCornerShape(12.dp),
+                    trailingIcon = {
+                        Text(
+                            if (mode == "percentage") "%" else sym,
+                            color = th.accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold
+                        )
                     }
-                }
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(
                         checked         = overdraft,
@@ -151,6 +151,7 @@ fun CategoryDialog(
 /**
  * Record an expense. With [fixedTarget] the category is locked (spend button on
  * a category card); with null the user picks a category (quick-add FAB).
+ * The preselected category is the TOP one of the user's own list order.
  */
 @Composable
 fun SpendDialog(
@@ -164,13 +165,13 @@ fun SpendDialog(
     val unallocAlloc = computeUnallocated(state.categories, state.totalMoney)
     val unallocSpent = state.categories["__unallocated__"]?.spent ?: 0.0
     val options = remember {
-        val named = state.categories.keys.filter { it != "__unallocated__" }.sorted()
+        val named = state.orderedCategoryNames()
         if (unallocAlloc > 0 || named.isEmpty()) named + "__unallocated__" else named
     }
     var target    by remember { mutableStateOf(fixedTarget ?: options.first()) }
     var amountStr by remember { mutableStateOf("") }
     var desc      by remember { mutableStateOf("") }
-    var dateStr   by remember { mutableStateOf("") }
+    var dateStr   by remember { mutableStateOf("") }          // "" = today
     var expanded  by remember { mutableStateOf(false) }
 
     val maxAmt = if (target == "__unallocated__")
@@ -241,18 +242,15 @@ fun SpendDialog(
                     singleLine = true, colors = otfColors(th),
                     shape = RoundedCornerShape(12.dp)
                 )
-                OutlinedTextField(
-                    value = dateStr, onValueChange = { dateStr = it },
-                    label = { Text(t(tr,"enter_date")) },
-                    singleLine = true, colors = otfColors(th),
-                    shape = RoundedCornerShape(12.dp)
-                )
+                DateField(
+                    value = dateStr, label = t(tr,"date"),
+                    langCode = state.language, th = th, tr = tr
+                ) { dateStr = it }
             }
         },
         confirmButton  = {
             TextButton(onClick = {
-                val date = if (dateStr.isBlank() || parseDate(dateStr) == null) todayStr() else dateStr
-                state.recordExpense(target, amountStr.toDoubleOrNull() ?: 0.0, desc, date)
+                state.recordExpense(target, amountStr.toDoubleOrNull() ?: 0.0, desc, dateStr)
                 onDismiss()
             }) { Text(t(tr,"ok"), color = th.accent, fontWeight = FontWeight.SemiBold) }
         },
@@ -278,7 +276,7 @@ fun EditExpenseDialog(
         return
     }
     val cats = remember {
-        (state.categories.keys.filter { it != "__unallocated__" } + expense.category).distinct().sorted()
+        (state.orderedCategoryNames() + expense.category).distinct()
     }
     var category  by remember { mutableStateOf(expense.category) }
     var amountStr by remember { mutableStateOf(expense.amount.toString()) }
@@ -324,10 +322,10 @@ fun EditExpenseDialog(
                     value = desc, onValueChange = { desc = it }, label = { Text(t(tr,"description")) },
                     singleLine = true, colors = otfColors(th), shape = RoundedCornerShape(12.dp)
                 )
-                OutlinedTextField(
-                    value = date, onValueChange = { date = it }, label = { Text(t(tr,"date")) },
-                    singleLine = true, colors = otfColors(th), shape = RoundedCornerShape(12.dp)
-                )
+                DateField(
+                    value = date, label = t(tr,"date"),
+                    langCode = state.language, th = th, tr = tr
+                ) { date = it }
             }
         },
         confirmButton  = {
@@ -379,10 +377,10 @@ fun EditIncomeDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true, colors = otfColors(th), shape = RoundedCornerShape(12.dp)
                 )
-                OutlinedTextField(
-                    value = date, onValueChange = { date = it }, label = { Text(t(tr,"date")) },
-                    singleLine = true, colors = otfColors(th), shape = RoundedCornerShape(12.dp)
-                )
+                DateField(
+                    value = date, label = t(tr,"date"),
+                    langCode = state.language, th = th, tr = tr
+                ) { date = it }
             }
         },
         confirmButton  = {

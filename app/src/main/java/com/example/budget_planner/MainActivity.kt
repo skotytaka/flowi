@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -70,11 +71,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("jb_v3", Context.MODE_PRIVATE)
+        ensureAutoChannel(this)
         setContent {
             val state = remember {
                 prefs.getString("data", null)
                     ?.let { runCatching { AppState.fromJson(it) }.getOrNull() }
                     ?: AppState()
+            }
+
+            // v0.9: expenses captured from Google Wallet while the app was closed
+            LaunchedEffect(Unit) { state.mergePendingAutoExpenses(prefs) }
+
+            // v0.9: while the UI is alive, Wallet payments land in the state directly
+            DisposableEffect(Unit) {
+                WalletBridge.liveHandler = { amount, merchant ->
+                    state.recordExpense(state.resolveAutoCategory(), amount, merchant, todayStr())
+                    true
+                }
+                onDispose { WalletBridge.liveHandler = null }
             }
 
             // Debounced auto-save: any snapshot state change re-serializes, but we

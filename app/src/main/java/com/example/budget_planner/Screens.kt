@@ -2,20 +2,29 @@
 
 package com.example.budget_planner
 
+import android.Manifest
+import android.content.Intent
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,10 +32,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.delay
 
 // ── Home (Budget) ─────────────────────────────────────────────────────────────
 
@@ -38,6 +59,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
     var editCategoryName   by remember { mutableStateOf<String?>(null) }
     var deleteCategoryName by remember { mutableStateOf<String?>(null) }
     var period             by remember { mutableStateOf("all") }
+    var openSwipeKey       by remember { mutableStateOf<String?>(null) }   // one swiped-open card at a time
 
     // derivedStateOf: these recompute only when the underlying data changes,
     // not on every recomposition
@@ -47,9 +69,8 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
     val pInc by remember { derivedStateOf {
         state.incomes.filter { filterByPeriod(it.date, period, state.monthResetDay) }
     } }
-    val catNames by remember { derivedStateOf {
-        state.categories.keys.filter { it != "__unallocated__" }.sorted()
-    } }
+    // v0.9: categories follow the user's own drag & drop order
+    val catNames by remember { derivedStateOf { state.orderedCategoryNames() } }
 
     val pExpSum      = pExp.sumOf { it.amount }
     val pIncSum      = pInc.sumOf { it.amount }
@@ -57,8 +78,27 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
     val unallocSpent = state.categories["__unallocated__"]?.spent ?: 0.0
     val shownTotal   = animateMoney(state.totalMoney)
 
+    // Long-press drag & drop between category cards
+    val listState = rememberLazyListState()
+    val haptic    = LocalHapticFeedback.current
+    val dragState = remember {
+        DragDropState(
+            listState      = listState,
+            isDraggableKey = { key -> key is String && key.startsWith(kCatKeyPrefix) },
+            onMove         = { from, to -> state.moveCategory(from, to) }
+        )
+    }
+    // Auto-scroll while a dragged card is held near the top/bottom edge
+    LaunchedEffect(dragState.draggingKey) {
+        while (dragState.draggingKey != null) {
+            if (dragState.scrollSpeed != 0f) listState.scrollBy(dragState.scrollSpeed)
+            delay(12)
+        }
+    }
+
     LazyColumn(
         Modifier.fillMaxSize(),
+        state               = listState,
         contentPadding      = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -128,7 +168,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
             }
         }
 
-        items(catNames, key = { it }) { name ->
+        items(catNames, key = { kCatKeyPrefix + it }) { name ->
             val cat = state.categories[name] ?: return@items
             val dispSpent = if (period == "all") cat.spent
                             else pExp.filter { it.category == name }.sumOf { it.amount }
@@ -138,20 +178,64 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
                 "annual"     -> "${"%.0f".format(cat.value)}$sym${t(tr,"per_year")}"
                 else          -> cat.value.toString()
             }
-            CategoryCard(
-                name        = name,
-                modeStr     = modeStr,
-                alloc       = cat.allocated(state.totalMoney),
-                spent       = dispSpent,
-                sym         = sym,
-                th          = th,
-                tr          = tr,
-                isDeletable = true,
-                onSpend     = { spendTarget = name },
-                onEdit      = { editCategoryName = name },
-                onDelete    = { deleteCategoryName = name },
-                modifier    = Modifier.animateItem()
-            )
+            val itemKey    = kCatKeyPrefix + name
+            val isDragging = dragState.draggingKey == itemKey
+
+            SwipeRevealBox(
+                isOpen  = openSwipeKey == name,
+                enabled = true,
+                onOpen  = { openSwipeKey = name },
+                onClose = { if (openSwipeKey == name) openSwipeKey = null },
+                actions = {
+                    SwipeActionButton(
+                        icon = Icons.Default.Edit, label = t(tr,"edit"),
+                        bg = th.accent, fg = th.bg
+                    ) { openSwipeKey = null; editCategoryName = name }
+                    Spacer(Modifier.width(8.dp))
+                    SwipeActionButton(
+                        icon = Icons.Default.Delete, label = t(tr,"delete"),
+                        bg = kBad, fg = Color.White
+                    ) { openSwipeKey = null; deleteCategoryName = name }
+                },
+                modifier = Modifier
+                    .then(
+                        if (isDragging)
+                            Modifier.zIndex(1f).graphicsLayer {
+                                translationY = dragState.draggingOffset
+                                scaleX = 1.02f
+                                scaleY = 1.02f
+                            }
+                        else
+                            Modifier.zIndex(0f).animateItem()
+                    )
+                    .pointerInput(name) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                openSwipeKey = null
+                                dragState.onDragStart(kCatKeyPrefix + name)
+                            },
+                            onDragEnd    = { dragState.onDragStop() },
+                            onDragCancel = { dragState.onDragStop() },
+                            onDrag       = { change, amount ->
+                                change.consume()
+                                dragState.onDrag(amount.y)
+                            }
+                        )
+                    }
+            ) {
+                CategoryCard(
+                    name       = name,
+                    modeStr    = modeStr,
+                    alloc      = cat.allocated(state.totalMoney),
+                    spent      = dispSpent,
+                    sym        = sym,
+                    th         = th,
+                    tr         = tr,
+                    onSpend    = { spendTarget = name },
+                    isDragging = isDragging
+                )
+            }
         }
 
         if (unallocAlloc > 0) {
@@ -159,18 +243,15 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
                 val dispSpent = if (period == "all") unallocSpent
                                 else pExp.filter { it.category == "__unallocated__" }.sumOf { it.amount }
                 CategoryCard(
-                    name        = t(tr,"unallocated"),
-                    modeStr     = "~",
-                    alloc       = unallocAlloc,
-                    spent       = dispSpent,
-                    sym         = sym,
-                    th          = th,
-                    tr          = tr,
-                    isDeletable = false,
-                    onSpend     = { spendTarget = "__unallocated__" },
-                    onEdit      = {},
-                    onDelete    = {},
-                    modifier    = Modifier.animateItem()
+                    name     = t(tr,"unallocated"),
+                    modeStr  = "~",
+                    alloc    = unallocAlloc,
+                    spent    = dispSpent,
+                    sym      = sym,
+                    th       = th,
+                    tr       = tr,
+                    onSpend  = { spendTarget = "__unallocated__" },
+                    modifier = Modifier.animateItem()
                 )
             }
         }
@@ -178,13 +259,13 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
 
     // ── Dialogs ──
     if (showIncome)   IncomeDialog(state, tr, th) { showIncome = false }
-    if (showCategory) CategoryDialog(null, state, tr, th) { showCategory = false }
+    if (showCategory) CategoryDialog(null, state, tr, th, sym) { showCategory = false }
     editCategoryName?.let { name ->
-        CategoryDialog(name, state, tr, th) { editCategoryName = null }
+        CategoryDialog(name, state, tr, th, sym) { editCategoryName = null }
     }
     deleteCategoryName?.let { name ->
         ConfirmDialog(t(tr,"confirm_delete_category"), tr, th) { ok ->
-            if (ok) state.categories.remove(name)  // expenses stay in history
+            if (ok) state.removeCategory(name)  // expenses stay in history
             deleteCategoryName = null
         }
     }
@@ -199,6 +280,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
 fun StatsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: String) {
     var period    by remember { mutableStateOf("month") }
     var chartMode by remember { mutableStateOf("pie") }
+    var aiOpen    by remember { mutableStateOf(false) }
 
     val filtered by remember { derivedStateOf {
         state.expenses.filter { filterByPeriod(it.date, period, state.monthResetDay) }
@@ -287,7 +369,25 @@ fun StatsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym:
                 }
             }
         }
+
+        // v0.9: AI analysis of the whole budget (month + all time + by day)
+        Spacer(Modifier.height(4.dp))
+        Button(
+            onClick   = { aiOpen = true },
+            modifier  = Modifier.fillMaxWidth().height(50.dp),
+            colors    = ButtonDefaults.buttonColors(containerColor = th.accent, contentColor = th.bg),
+            shape     = RoundedCornerShape(14.dp),
+            elevation = ButtonDefaults.buttonElevation(0.dp)
+        ) {
+            Text(
+                "✨  ${t(tr,"ai_analysis")}",
+                fontSize   = 14.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
     }
+
+    if (aiOpen) AiAnalysisDialog(state, th, tr, sym) { aiOpen = false }
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
@@ -430,6 +530,8 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
     var themeExpanded    by remember { mutableStateOf(false) }
     var currExpanded     by remember { mutableStateOf(false) }
     var resetDayExpanded by remember { mutableStateOf(false) }
+    var walletExpanded   by remember { mutableStateOf(false) }
+    var aiExpanded       by remember { mutableStateOf(false) }
     var aboutExpanded    by remember { mutableStateOf(false) }
 
     LazyColumn(
@@ -447,7 +549,7 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
                 onToggle = { langExpanded = !langExpanded }
             ) {
                 kLanguageNames.forEach { (code, name) ->
-                    RadioRow(label = name, selected = state.language == code, th = th) {
+                    SquareOptionRow(label = name, selected = state.language == code, th = th) {
                         state.language = code
                     }
                 }
@@ -464,33 +566,26 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
             ) {
                 kThemeKeys.forEach { key ->
                     val preview = kThemes.getValue(key)
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { state.themeName = key }
-                            .padding(vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = state.themeName == key,
-                            onClick  = { state.themeName = key },
-                            colors   = RadioButtonDefaults.colors(selectedColor = th.accent)
-                        )
-                        Text(t(tr, "theme_$key", key), color = th.fg, modifier = Modifier.weight(1f))
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(
-                                Modifier.size(16.dp)
-                                    .background(preview.bg, RoundedCornerShape(4.dp))
-                                    .border(1.dp, th.fg.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                            )
-                            Box(Modifier.size(16.dp).background(preview.accent, RoundedCornerShape(4.dp)))
-                            Box(
-                                Modifier.size(16.dp)
-                                    .background(preview.cardBg, RoundedCornerShape(4.dp))
-                                    .border(1.dp, th.fg.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                            )
+                    SquareOptionRow(
+                        label    = t(tr, "theme_$key", key),
+                        selected = state.themeName == key,
+                        th       = th,
+                        trailing = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(
+                                    Modifier.size(16.dp)
+                                        .background(preview.bg, RoundedCornerShape(4.dp))
+                                        .border(1.dp, th.fg.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                                )
+                                Box(Modifier.size(16.dp).background(preview.accent, RoundedCornerShape(4.dp)))
+                                Box(
+                                    Modifier.size(16.dp)
+                                        .background(preview.cardBg, RoundedCornerShape(4.dp))
+                                        .border(1.dp, th.fg.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                                )
+                            }
                         }
-                    }
+                    ) { state.themeName = key }
                 }
             }
         }
@@ -504,7 +599,7 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
                 onToggle = { currExpanded = !currExpanded }
             ) {
                 kCurrencies.forEach { (name, sym) ->
-                    RadioRow(label = "$name  $sym", selected = state.currency == name, th = th) {
+                    SquareOptionRow(label = "$name  $sym", selected = state.currency == name, th = th) {
                         state.currency = name
                     }
                 }
@@ -556,10 +651,144 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
             }
         }
 
+        // ── v0.9: automatic expenses from Google Wallet payment pop-ups ──
+        item(key = "wallet") {
+            val ctx = LocalContext.current
+            var accessTick by remember { mutableIntStateOf(0) }
+            val lifecycleOwner = LocalLifecycleOwner.current
+            // Re-check listener access every time the user comes back from system settings
+            DisposableEffect(lifecycleOwner) {
+                val obs = LifecycleEventObserver { _, e ->
+                    if (e == Lifecycle.Event.ON_RESUME) accessTick++
+                }
+                lifecycleOwner.lifecycle.addObserver(obs)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+            }
+            val hasAccess = remember(accessTick) {
+                NotificationManagerCompat.getEnabledListenerPackages(ctx).contains(ctx.packageName)
+            }
+            val notifPermLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { }
+            fun openListenerSettings() {
+                runCatching {
+                    ctx.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                }
+            }
+
+            AccordionSection(
+                title    = t(tr, "auto_wallet"),
+                subtitle = if (state.autoWalletEnabled) catDisplay(state.resolveAutoCategory(), tr)
+                           else t(tr, "off"),
+                expanded = walletExpanded,
+                th       = th,
+                onToggle = { walletExpanded = !walletExpanded }
+            ) {
+                Text(
+                    t(tr, "auto_wallet_desc"),
+                    fontSize = 12.sp,
+                    color    = th.fg.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        t(tr, "auto_wallet_switch"),
+                        color = th.fg, fontSize = 14.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = state.autoWalletEnabled,
+                        onCheckedChange = { on ->
+                            state.autoWalletEnabled = on
+                            if (on) {
+                                // Ask the phone for everything needed right away:
+                                // permission to post confirmations + access to read pop-ups
+                                if (Build.VERSION.SDK_INT >= 33) {
+                                    notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                if (!hasAccess) openListenerSettings()
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor   = th.accent,
+                            checkedThumbColor   = th.bg,
+                            uncheckedTrackColor = th.fg.copy(alpha = 0.15f)
+                        )
+                    )
+                }
+                if (state.autoWalletEnabled) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background((if (hasAccess) kGood else kBad).copy(alpha = 0.10f))
+                            .clickable { if (!hasAccess) openListenerSettings() }
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (hasAccess) t(tr, "wallet_access_ok") else t(tr, "wallet_access_missing"),
+                            fontSize = 12.sp,
+                            color    = if (hasAccess) kGood else kBad
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        t(tr, "auto_wallet_target"),
+                        fontSize = 12.sp,
+                        color    = th.fg.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    (state.orderedCategoryNames() + "__unallocated__").forEach { name ->
+                        SquareOptionRow(
+                            label    = catDisplay(name, tr),
+                            selected = state.autoWalletCategory == name,
+                            th       = th
+                        ) { state.autoWalletCategory = name }
+                    }
+                }
+            }
+        }
+
+        // ── v0.9: AI analysis provider + API key ──
+        item(key = "ai") {
+            AccordionSection(
+                title    = t(tr, "ai_settings"),
+                subtitle = (kAiProviders[state.aiProvider] ?: state.aiProvider) +
+                           if (state.aiApiKey.isBlank()) "" else " ✓",
+                expanded = aiExpanded,
+                th       = th,
+                onToggle = { aiExpanded = !aiExpanded }
+            ) {
+                Text(
+                    t(tr, "ai_key_hint"),
+                    fontSize = 12.sp,
+                    color    = th.fg.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                SquareSegmented(
+                    options     = kAiProviders.map { (k, v) -> k to v },
+                    selectedKey = state.aiProvider,
+                    th          = th
+                ) { state.aiProvider = it }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = state.aiApiKey,
+                    onValueChange = { state.aiApiKey = it },
+                    label = { Text(t(tr, "ai_api_key")) },
+                    singleLine = true,
+                    colors = otfColors(th),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
         item(key = "about") {
             AccordionSection(
                 title    = t(tr, "about"),
-                subtitle = "Flowi v0.8",
+                subtitle = "Flowi v0.9",
                 expanded = aboutExpanded,
                 th       = th,
                 onToggle = { aboutExpanded = !aboutExpanded }
@@ -625,7 +854,7 @@ fun AboutContent(th: AppThemeData, tr: Map<String, String>) {
             }
             Column {
                 Text("Flowi", fontWeight = FontWeight.Bold, color = th.fg, fontSize = 17.sp)
-                Text("${t(tr,"version")} 0.8", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
+                Text("${t(tr,"version")} 0.9", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
             }
         }
 
