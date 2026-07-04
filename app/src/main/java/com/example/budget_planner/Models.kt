@@ -23,10 +23,16 @@ data class Category(
     val value: Double,
     val mode: String, // "percentage" | "monthly" | "annual"
     val overdraft: Boolean,
-    val spent: Double = 0.0
+    val spent: Double = 0.0,
+    val kind: String = "spending" // v0.9.2: "spending" | "saving" (funds, investments)
 ) {
-    fun allocated(totalMoney: Double): Double = when (mode) {
-        "percentage" -> totalMoney * value / 100.0
+    /**
+     * v0.9.2: percentage categories no longer take a share of ALL money — they
+     * share [pctBase], i.e. what remains after fixed monthly/annual categories.
+     * That keeps their ratio to each other but never allocates more than exists.
+     */
+    fun allocated(totalMoney: Double, pctBase: Double = totalMoney): Double = when (mode) {
+        "percentage" -> pctBase * value / 100.0
         "monthly"    -> value
         "annual"     -> value / 12.0
         else          -> 0.0
@@ -35,6 +41,7 @@ data class Category(
     fun toJsonObject() = JSONObject().apply {
         put("value", value); put("mode", mode)
         put("overdraft", overdraft); put("spent", spent)
+        put("kind", kind)
     }
     companion object {
         fun fromJsonObject(name: String, json: JSONObject) = Category(
@@ -42,10 +49,25 @@ data class Category(
             value     = json.optDouble("value", 0.0),
             mode      = json.optString("mode", "percentage"),
             overdraft = json.optBoolean("overdraft", false),
-            spent     = json.optDouble("spent", 0.0)
+            spent     = json.optDouble("spent", 0.0),
+            // Old saves have no "kind": recognize funds/investments by name once,
+            // so v0.9.1 data upgrades seamlessly.
+            kind      = json.optString("kind", "").ifBlank { guessKind(name) }
         )
     }
 }
+
+// Name fragments (all app languages) that mark a category as savings-like.
+private val kSavingHints = listOf(
+    "fund", "invest", "saving", "emerg", "deposit",
+    "фонд", "інвест", "заощад", "накопич", "депозит", "резерв",
+    "spar", "rücklage", "notgroschen", "anlage",
+    "ادخار", "استثمار", "طوارئ", "صندوق", "وديعة",
+    "储蓄", "投资", "应急", "基金", "存款"
+)
+
+fun guessKind(name: String): String =
+    if (kSavingHints.any { name.lowercase().contains(it) }) "saving" else "spending"
 
 data class Expense(
     val category: String,
@@ -231,7 +253,10 @@ fun AppState.removeIncome(idx: Int) {
 }
 
 /** Create a new category, or update/rename an existing one when [oldName] is given. */
-fun AppState.upsertCategory(oldName: String?, name: String, value: Double, mode: String, overdraft: Boolean) {
+fun AppState.upsertCategory(
+    oldName: String?, name: String, value: Double, mode: String,
+    overdraft: Boolean, kind: String = "spending"
+) {
     if (name.isBlank() || value <= 0) return
     if (oldName == null && categories.containsKey(name)) return   // no duplicates
     val keepSpent = oldName?.let { categories[it]?.spent } ?: 0.0
@@ -246,7 +271,7 @@ fun AppState.upsertCategory(oldName: String?, name: String, value: Double, mode:
     } else if (oldName == null && name !in categoryOrder) {
         categoryOrder.add(name)                 // new categories go to the end
     }
-    categories[name] = Category(name, value, mode, overdraft, keepSpent)
+    categories[name] = Category(name, value, mode, overdraft, keepSpent, kind)
 }
 
 fun AppState.removeCategory(name: String) {
@@ -371,7 +396,21 @@ fun filterByPeriod(date: String, period: String, monthResetDay: Int = 1): Boolea
     else    -> true
 }
 
+/**
+ * v0.9.2: fixed monthly/annual categories are funded first; percentage
+ * categories then share what is left, preserving their ratio to each other.
+ * Example: income 1000, rent fixed 600, percents 20/20/60 → they get 80/80/240.
+ */
+fun percentBase(categories: Map<String, Category>, totalMoney: Double): Double {
+    val fixed = categories.values
+        .filter { it.name != "__unallocated__" && (it.mode == "monthly" || it.mode == "annual") }
+        .sumOf { if (it.mode == "monthly") it.value else it.value / 12.0 }
+    return (totalMoney - fixed).coerceAtLeast(0.0)
+}
+
 fun computeUnallocated(categories: Map<String, Category>, totalMoney: Double): Double {
-    val used = categories.filter { it.key != "__unallocated__" }.values.sumOf { it.allocated(totalMoney) }
+    val base = percentBase(categories, totalMoney)
+    val used = categories.filter { it.key != "__unallocated__" }.values
+        .sumOf { it.allocated(totalMoney, base) }
     return (totalMoney - used).coerceAtLeast(0.0)
 }

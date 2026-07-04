@@ -53,9 +53,14 @@ object Ai {
         val elapsedDays = (((parseDate(today)?.time ?: startMs) - startMs) / dayMs + 1).coerceAtLeast(1)
         val totalDays = ((((parseDate(mEnd)?.time ?: startMs)) - startMs) / dayMs).coerceAtLeast(1)
 
+        val pctBase = percentBase(state.categories, state.totalMoney)
+        fun kindOf(c: String) = state.categories[c]?.kind ?: "spending"
+
         sb.appendLine("CURRENCY: $sym")
         sb.appendLine("TODAY: $today (${SimpleDateFormat("EEEE", Locale.US).format(parseDate(today)!!)})")
         sb.appendLine("BUDGET RULE: the user's budget month restarts on day ${state.monthResetDay} of every calendar month (allocations and \"this month\" totals reset then).")
+        sb.appendLine("ALLOCATION RULE: fixed monthly/annual categories are funded first; percentage categories then share the remaining money (${pctBase.money()}) in their ratio.")
+        sb.appendLine("CATEGORY TYPES: SAVINGS categories (emergency funds, investing, etc.) are money the user deliberately sets aside — NOT consumption. Treat them as savings contributions, never as overspending.")
         sb.appendLine("CURRENT BUDGET MONTH: $mStart (inclusive) .. $mEnd (exclusive) — today is day $elapsedDays of $totalDays (${(elapsedDays * 100 / totalDays)}% of the period elapsed).")
         sb.appendLine("CURRENT TOTAL MONEY: ${state.totalMoney.money()}")
         sb.appendLine()
@@ -63,12 +68,13 @@ object Ai {
         state.orderedCategoryNames().forEach { name ->
             val c = state.categories[name] ?: return@forEach
             val rule = when (c.mode) {
-                "percentage" -> "${c.value}% of total money"
+                "percentage" -> "${c.value}% of the money left after fixed categories"
                 "monthly"    -> "fixed ${c.value.money()} per month"
                 "annual"     -> "${c.value.money()} per year (= ${(c.value / 12.0).money()}/month)"
                 else          -> c.mode
             }
-            sb.appendLine("- $name [$rule]: allocated now ${c.allocated(state.totalMoney).money()}, spent all time ${c.spent.money()}")
+            val type = if (c.kind == "saving") "SAVINGS" else "SPENDING"
+            sb.appendLine("- $name [$rule] [type: $type]: allocated now ${c.allocated(state.totalMoney, pctBase).money()}, spent all time ${c.spent.money()}")
         }
         val unalloc = computeUnallocated(state.categories, state.totalMoney)
         if (unalloc > 0) {
@@ -78,7 +84,10 @@ object Ai {
         sb.appendLine()
         sb.appendLine("== ALL TIME ==")
         sb.appendLine("Total income: ${state.incomes.sumOf { it.amount }.money()}")
-        sb.appendLine("Total expenses: ${state.expenses.sumOf { it.amount }.money()}")
+        val allSpend = state.expenses.filter { kindOf(it.category) == "spending" }.sumOf { it.amount }
+        val allSave  = state.expenses.filter { kindOf(it.category) == "saving" }.sumOf { it.amount }
+        sb.appendLine("Total real spending: ${allSpend.money()}")
+        sb.appendLine("Total set aside into savings/funds: ${allSave.money()}")
         sb.appendLine("Recent incomes (date, weekday, source, amount):")
         state.incomes.sortedByDescending { it.date }.take(15).forEach {
             sb.appendLine("  + ${it.date} (${wd(it.date)}) ${it.source}: ${it.amount.money()}")
@@ -89,12 +98,18 @@ object Ai {
         val mInc = state.incomes.filter { it.date >= mStart && it.date < mEnd }
         sb.appendLine("Month income total: ${mInc.sumOf { it.amount }.money()}")
         mInc.take(30).forEach { sb.appendLine("  + ${it.date} (${wd(it.date)}) ${it.source}: ${it.amount.money()}") }
-        sb.appendLine("Month expense total so far: ${mExp.sumOf { it.amount }.money()} after $elapsedDays of $totalDays days")
+        val mSpend = mExp.filter { kindOf(it.category) == "spending" }.sumOf { it.amount }
+        val mSave  = mExp.filter { kindOf(it.category) == "saving" }.sumOf { it.amount }
+        sb.appendLine("Month real spending so far: ${mSpend.money()} after $elapsedDays of $totalDays days")
+        sb.appendLine("Month savings contributions so far: ${mSave.money()}")
         sb.appendLine("Expenses by category this month:")
         mExp.groupBy { it.category }
             .map { (c, l) -> c to l.sumOf { e -> e.amount } }
             .sortedByDescending { it.second }
-            .forEach { (c, v) -> sb.appendLine("  - ${catName(c)}: ${v.money()}") }
+            .forEach { (c, v) ->
+                val tag = if (kindOf(c) == "saving") " (savings)" else ""
+                sb.appendLine("  - ${catName(c)}$tag: ${v.money()}")
+            }
         sb.appendLine("Expenses by day this month (date, weekday, total):")
         mExp.groupBy { it.date }.toSortedMap()
             .forEach { (d, l) -> sb.appendLine("  $d (${wd(d)}): ${l.sumOf { e -> e.amount }.money()}") }

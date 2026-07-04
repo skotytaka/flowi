@@ -84,6 +84,7 @@ fun CategoryDialog(
     var valueStr  by remember { mutableStateOf(existing?.value?.toString() ?: "") }
     var mode      by remember { mutableStateOf(existing?.mode ?: "percentage") }
     var overdraft by remember { mutableStateOf(existing?.overdraft ?: false) }
+    var kind      by remember { mutableStateOf(existing?.kind ?: "spending") }   // v0.9.2
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -111,6 +112,22 @@ fun CategoryDialog(
                     selectedKey = mode,
                     th = th
                 ) { mode = it }
+                if (mode == "percentage") {
+                    Text(t(tr,"pct_hint"), fontSize = 11.sp, color = th.fg.copy(alpha = 0.45f))
+                }
+                // v0.9.2: what this category IS — normal spending or set-aside savings
+                Text(t(tr,"category_kind"), fontSize = 12.sp, color = th.fg.copy(alpha = 0.6f))
+                SquareSegmented(
+                    options = listOf(
+                        "spending" to t(tr,"kind_spending"),
+                        "saving"   to t(tr,"kind_saving")
+                    ),
+                    selectedKey = kind,
+                    th = th
+                ) { kind = it }
+                if (kind == "saving") {
+                    Text(t(tr,"kind_hint"), fontSize = 11.sp, color = th.fg.copy(alpha = 0.45f))
+                }
                 OutlinedTextField(
                     value = valueStr, onValueChange = { valueStr = it },
                     label = { Text(t(tr,"category_value")) },
@@ -136,7 +153,7 @@ fun CategoryDialog(
         },
         confirmButton  = {
             TextButton(onClick = {
-                state.upsertCategory(editName, name.trim(), valueStr.toDoubleOrNull() ?: 0.0, mode, overdraft)
+                state.upsertCategory(editName, name.trim(), valueStr.toDoubleOrNull() ?: 0.0, mode, overdraft, kind)
                 onDismiss()
             }) { Text(t(tr,"ok"), color = th.accent, fontWeight = FontWeight.SemiBold) }
         },
@@ -174,10 +191,11 @@ fun SpendDialog(
     var dateStr   by remember { mutableStateOf("") }          // "" = today
     var expanded  by remember { mutableStateOf(false) }
 
+    val pctBase = percentBase(state.categories, state.totalMoney)
     val maxAmt = if (target == "__unallocated__")
         (unallocAlloc - unallocSpent).coerceAtLeast(0.0)
     else
-        state.categories[target]?.let { (it.allocated(state.totalMoney) - it.spent).coerceAtLeast(0.0) } ?: 0.0
+        state.categories[target]?.let { (it.allocated(state.totalMoney, pctBase) - it.spent).coerceAtLeast(0.0) } ?: 0.0
 
     AlertDialog(
         onDismissRequest = onDismiss,

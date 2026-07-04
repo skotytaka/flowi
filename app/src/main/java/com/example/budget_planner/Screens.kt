@@ -70,6 +70,8 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
 
     val pExpSum      = pExp.sumOf { it.amount }
     val pIncSum      = pInc.sumOf { it.amount }
+    // v0.9.2: percent categories share what's left after fixed ones
+    val pctBase      = percentBase(state.categories, state.totalMoney)
     val unallocAlloc = computeUnallocated(state.categories, state.totalMoney)
     val unallocSpent = state.categories["__unallocated__"]?.spent ?: 0.0
     val shownTotal   = animateMoney(state.totalMoney)
@@ -168,12 +170,14 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
             val cat = state.categories[name] ?: return@items
             val dispSpent = if (period == "all") cat.spent
                             else pExp.filter { it.category == name }.sumOf { it.amount }
-            val modeStr = when (cat.mode) {
+            val modeStrRaw = when (cat.mode) {
                 "percentage" -> "${cat.value.toInt()}%"
                 "monthly"    -> "${"%.0f".format(cat.value)}$sym${t(tr,"per_month")}"
                 "annual"     -> "${"%.0f".format(cat.value)}$sym${t(tr,"per_year")}"
                 else          -> cat.value.toString()
             }
+            // v0.9.2: savings/fund categories get a small money-bag marker
+            val modeStr    = if (cat.kind == "saving") "💰 $modeStrRaw" else modeStrRaw
             val itemKey    = kCatKeyPrefix + name
             val isDragging = dragState.draggingKey == itemKey
 
@@ -223,7 +227,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
                 CategoryCard(
                     name       = name,
                     modeStr    = modeStr,
-                    alloc      = cat.allocated(state.totalMoney),
+                    alloc      = cat.allocated(state.totalMoney, pctBase),
                     spent      = dispSpent,
                     sym        = sym,
                     th         = th,
@@ -807,7 +811,7 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
         item(key = "about") {
             AccordionSection(
                 title    = t(tr, "about"),
-                subtitle = "Flowi v0.9.1",
+                subtitle = "Flowi v0.9.2",
                 expanded = aboutExpanded,
                 th       = th,
                 onToggle = { aboutExpanded = !aboutExpanded }
@@ -874,7 +878,7 @@ fun AboutContent(th: AppThemeData, tr: Map<String, String>) {
             )
             Column {
                 Text("Flowi", fontWeight = FontWeight.Bold, color = th.fg, fontSize = 17.sp)
-                Text("${t(tr,"version")} 0.9.1", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
+                Text("${t(tr,"version")} 0.9.2", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
             }
         }
 
