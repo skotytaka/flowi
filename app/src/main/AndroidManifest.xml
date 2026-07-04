@@ -2,10 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- v0.9: AI analysis calls the provider's HTTP API -->
+    <!-- AI analysis calls the provider's HTTP API -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- v0.9: confirmation pop-up after an auto-added Wallet expense (Android 13+) -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -27,18 +25,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- v0.9: reads Google Wallet payment pop-ups to auto-add expenses.
-             Access is granted by the user from the in-app Settings toggle. -->
-        <service
-            android:name=".WalletListenerService"
-            android:exported="false"
-            android:label="Flowi"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
     </application>
 
 </manifest>

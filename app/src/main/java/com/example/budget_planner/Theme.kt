@@ -19,14 +19,14 @@ data class AppThemeData(
 
 val kThemes = mapOf(
     "black"       to AppThemeData(Color(0xFF0A0A0F), Color(0xFFEAEAEA), Color(0xFF1C1C26), Color(0xFF7B8FF7)),
-    "white"       to AppThemeData(Color(0xFFF2F2F7), Color(0xFF1C1C1E), Color(0xFFFFFFFF), Color(0xFF0A84FF)),
+    // v0.9.1: fresh white-and-green theme ("white" and "hacker" retired)
+    "matcha"      to AppThemeData(Color(0xFFEAF4E7), Color(0xFF1E3B2B), Color(0xFFFCFFFB), Color(0xFF23A55A)),
     "sakura"      to AppThemeData(Color(0xFFFFF0F3), Color(0xFFAD1457), Color(0xFFFFFFFF), Color(0xFFE91E8C)),
     "cruel_angel" to AppThemeData(Color(0xFF080812), Color(0xFFFF4444), Color(0xFF1A0020), Color(0xFFFF2255)),
-    "hacker"      to AppThemeData(Color(0xFF060F06), Color(0xFF33FF33), Color(0xFF0A160A), Color(0xFF00E676)),
     "mandarin"    to AppThemeData(Color(0xFFFFF8F0), Color(0xFFBF5700), Color(0xFFFFFFFF), Color(0xFFFF6D00))
 )
 
-val kThemeKeys = listOf("black", "white", "sakura", "cruel_angel", "hacker", "mandarin")
+val kThemeKeys = listOf("black", "matcha", "sakura", "cruel_angel", "mandarin")
 
 // Semantic colors shared by every theme
 val kGood = Color(0xFF34C759)   // income / positive

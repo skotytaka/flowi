@@ -19,6 +19,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,7 +46,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -55,7 +55,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -71,24 +74,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("jb_v3", Context.MODE_PRIVATE)
-        ensureAutoChannel(this)
         setContent {
             val state = remember {
                 prefs.getString("data", null)
                     ?.let { runCatching { AppState.fromJson(it) }.getOrNull() }
                     ?: AppState()
-            }
-
-            // v0.9: expenses captured from Google Wallet while the app was closed
-            LaunchedEffect(Unit) { state.mergePendingAutoExpenses(prefs) }
-
-            // v0.9: while the UI is alive, Wallet payments land in the state directly
-            DisposableEffect(Unit) {
-                WalletBridge.liveHandler = { amount, merchant ->
-                    state.recordExpense(state.resolveAutoCategory(), amount, merchant, todayStr())
-                    true
-                }
-                onDispose { WalletBridge.liveHandler = null }
             }
 
             // Debounced auto-save: any snapshot state change re-serializes, but we
@@ -142,12 +132,13 @@ fun FlowiApp(state: AppState, th: AppThemeData, tr: Map<String, String>) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Box(
-                            Modifier.size(30.dp).background(th.accent, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("F", color = th.bg, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
-                        }
+                        // v0.9.1: real app icon instead of the "F" placeholder
+                        Image(
+                            painter            = painterResource(R.drawable.flowi_icon),
+                            contentDescription = null,
+                            contentScale       = ContentScale.Crop,
+                            modifier           = Modifier.size(30.dp).clip(CircleShape)
+                        )
                         Text(
                             t(tr, "app_name"),
                             fontWeight = FontWeight.Bold,

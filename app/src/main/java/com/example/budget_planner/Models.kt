@@ -1,6 +1,5 @@
 package com.example.budget_planner
 
-import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -99,8 +98,6 @@ class AppState(
     currency: String = "Dollar",
     monthResetDay: Int = 1,
     categoryOrder: List<String> = emptyList(),
-    autoWalletEnabled: Boolean = false,
-    autoWalletCategory: String = "__unallocated__",
     aiProvider: String = "gemini",
     aiApiKey: String = ""
 ) {
@@ -114,10 +111,8 @@ class AppState(
     var monthResetDay by mutableIntStateOf(monthResetDay)
     /** User-chosen display order of categories on the Budget screen (v0.9). */
     val categoryOrder = mutableStateListOf<String>().apply { addAll(categoryOrder) }
-    var autoWalletEnabled  by mutableStateOf(autoWalletEnabled)
-    var autoWalletCategory by mutableStateOf(autoWalletCategory)
-    var aiProvider         by mutableStateOf(aiProvider)
-    var aiApiKey           by mutableStateOf(aiApiKey)
+    var aiProvider by mutableStateOf(aiProvider)
+    var aiApiKey   by mutableStateOf(aiApiKey)
 
     fun toJson(): String {
         val root = JSONObject()
@@ -127,8 +122,6 @@ class AppState(
         root.put("currency", currency)
         root.put("month_reset_day", monthResetDay)
         root.put("category_order", JSONArray().also { a -> categoryOrder.forEach { a.put(it) } })
-        root.put("auto_wallet_enabled", autoWalletEnabled)
-        root.put("auto_wallet_category", autoWalletCategory)
         root.put("ai_provider", aiProvider)
         root.put("ai_api_key", aiApiKey)
         root.put("categories", JSONObject().also { o -> categories.forEach { (k, v) -> o.put(k, v.toJsonObject()) } })
@@ -160,12 +153,12 @@ class AppState(
                 expenses   = exps.map { e -> e.copy(date = normalizeDate(e.date) ?: e.date) },
                 incomes    = incs.map { i -> i.copy(date = normalizeDate(i.date) ?: i.date) },
                 language   = j.optString("language", "en"),
-                themeName  = j.optString("theme", "black"),
+                // v0.9.1: "white"/"hacker" themes were removed — migrate to matcha
+                themeName  = j.optString("theme", "black")
+                    .let { if (it == "white" || it == "hacker") "matcha" else it },
                 currency   = j.optString("currency", "Dollar"),
                 monthResetDay = j.optInt("month_reset_day", 1).coerceIn(1, 31),
                 categoryOrder = order,
-                autoWalletEnabled  = j.optBoolean("auto_wallet_enabled", false),
-                autoWalletCategory = j.optString("auto_wallet_category", "__unallocated__"),
                 aiProvider = j.optString("ai_provider", "gemini"),
                 aiApiKey   = j.optString("ai_api_key", "")
             )
@@ -293,32 +286,21 @@ fun AppState.moveCategory(fromKey: String, toKey: String) {
     categoryOrder.add(to, categoryOrder.removeAt(from))
 }
 
-// ── Auto-expenses from Google Wallet (v0.9) ──────────────────────────────────
+// ── Backup: export / import (v0.9.1) ─────────────────────────────────────────
 
-/** The category auto-expenses go to, falling back to Unallocated if it was deleted. */
-fun AppState.resolveAutoCategory(): String =
-    if (autoWalletCategory == "__unallocated__" || categories.containsKey(autoWalletCategory))
-        autoWalletCategory else "__unallocated__"
-
-/**
- * Expenses captured by WalletListenerService while the app was not running are
- * queued in SharedPreferences; this drains the queue into real expenses.
- */
-fun AppState.mergePendingAutoExpenses(prefs: SharedPreferences) {
-    val raw = prefs.getString("auto_pending", null) ?: return
-    prefs.edit().remove("auto_pending").apply()
-    runCatching {
-        val arr = JSONArray(raw)
-        for (i in 0 until arr.length()) {
-            val o = arr.getJSONObject(i)
-            recordExpense(
-                target      = resolveAutoCategory(),
-                amount      = o.optDouble("amount", 0.0),
-                description = o.optString("description", ""),
-                date        = o.optString("date", todayStr())
-            )
-        }
-    }
+/** Replace everything in this state with the contents of an imported backup. */
+fun AppState.replaceFrom(o: AppState) {
+    totalMoney = o.totalMoney
+    categories.clear();    categories.putAll(o.categories)
+    expenses.clear();      expenses.addAll(o.expenses)
+    incomes.clear();       incomes.addAll(o.incomes)
+    categoryOrder.clear(); categoryOrder.addAll(o.categoryOrder)
+    language      = o.language
+    themeName     = o.themeName
+    currency      = o.currency
+    monthResetDay = o.monthResetDay
+    aiProvider    = o.aiProvider
+    if (o.aiApiKey.isNotBlank()) aiApiKey = o.aiApiKey   // keep current key if backup has none
 }
 
 // ── Date & money helpers ──────────────────────────────────────────────────────

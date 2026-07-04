@@ -19,6 +19,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 // ── AI analysis (v0.9) ───────────────────────────────────────────────────────
 // The Stats screen button builds a plain-text summary of the user's budget,
@@ -33,50 +35,75 @@ val kAiProviders = linkedMapOf(
 
 object Ai {
 
-    /** Everything the model needs: month window, all-time totals, per-day breakdown. */
+    /**
+     * Everything the model needs for a deep analysis (v0.9.1): today's date with
+     * weekday, the budget-month rule and how far into it we are, each category's
+     * budget rule, and dated entries with weekdays so day-of-week patterns and
+     * spending pace can be reasoned about.
+     */
     fun buildDataSummary(state: AppState, sym: String): String {
         val sb = StringBuilder()
         val (mStart, mEnd) = budgetMonthRange(state.monthResetDay)
         fun catName(c: String) = if (c == "__unallocated__") "Unallocated" else c
+        val wdFmt = SimpleDateFormat("EEE", Locale.US)
+        fun wd(date: String) = parseDate(date)?.let { wdFmt.format(it) } ?: "?"
+        val today = todayStr()
+        val dayMs = 86_400_000L
+        val startMs = parseDate(mStart)?.time ?: 0L
+        val elapsedDays = (((parseDate(today)?.time ?: startMs) - startMs) / dayMs + 1).coerceAtLeast(1)
+        val totalDays = ((((parseDate(mEnd)?.time ?: startMs)) - startMs) / dayMs).coerceAtLeast(1)
 
         sb.appendLine("CURRENCY: $sym")
-        sb.appendLine("TODAY: ${todayStr()}")
+        sb.appendLine("TODAY: $today (${SimpleDateFormat("EEEE", Locale.US).format(parseDate(today)!!)})")
+        sb.appendLine("BUDGET RULE: the user's budget month restarts on day ${state.monthResetDay} of every calendar month (allocations and \"this month\" totals reset then).")
+        sb.appendLine("CURRENT BUDGET MONTH: $mStart (inclusive) .. $mEnd (exclusive) — today is day $elapsedDays of $totalDays (${(elapsedDays * 100 / totalDays)}% of the period elapsed).")
         sb.appendLine("CURRENT TOTAL MONEY: ${state.totalMoney.money()}")
         sb.appendLine()
-        sb.appendLine("== ALL TIME ==")
-        sb.appendLine("Total income: ${state.incomes.sumOf { it.amount }.money()}")
-        sb.appendLine("Total expenses: ${state.expenses.sumOf { it.amount }.money()}")
-        sb.appendLine("Categories (allocated now / spent all time):")
+        sb.appendLine("== CATEGORIES AND THEIR BUDGET RULES ==")
         state.orderedCategoryNames().forEach { name ->
             val c = state.categories[name] ?: return@forEach
-            sb.appendLine("- $name: allocated ${c.allocated(state.totalMoney).money()}, spent ${c.spent.money()}")
+            val rule = when (c.mode) {
+                "percentage" -> "${c.value}% of total money"
+                "monthly"    -> "fixed ${c.value.money()} per month"
+                "annual"     -> "${c.value.money()} per year (= ${(c.value / 12.0).money()}/month)"
+                else          -> c.mode
+            }
+            sb.appendLine("- $name [$rule]: allocated now ${c.allocated(state.totalMoney).money()}, spent all time ${c.spent.money()}")
         }
         val unalloc = computeUnallocated(state.categories, state.totalMoney)
         if (unalloc > 0) {
             val uSpent = state.categories["__unallocated__"]?.spent ?: 0.0
-            sb.appendLine("- Unallocated: allocated ${unalloc.money()}, spent ${uSpent.money()}")
+            sb.appendLine("- Unallocated [everything not assigned to a category]: allocated ${unalloc.money()}, spent ${uSpent.money()}")
         }
         sb.appendLine()
-        sb.appendLine("== CURRENT BUDGET MONTH ($mStart to $mEnd) ==")
+        sb.appendLine("== ALL TIME ==")
+        sb.appendLine("Total income: ${state.incomes.sumOf { it.amount }.money()}")
+        sb.appendLine("Total expenses: ${state.expenses.sumOf { it.amount }.money()}")
+        sb.appendLine("Recent incomes (date, weekday, source, amount):")
+        state.incomes.sortedByDescending { it.date }.take(15).forEach {
+            sb.appendLine("  + ${it.date} (${wd(it.date)}) ${it.source}: ${it.amount.money()}")
+        }
+        sb.appendLine()
+        sb.appendLine("== CURRENT BUDGET MONTH ==")
         val mExp = state.expenses.filter { it.date >= mStart && it.date < mEnd }
         val mInc = state.incomes.filter { it.date >= mStart && it.date < mEnd }
         sb.appendLine("Month income total: ${mInc.sumOf { it.amount }.money()}")
-        mInc.take(30).forEach { sb.appendLine("  + ${it.date} ${it.source}: ${it.amount.money()}") }
-        sb.appendLine("Month expenses total: ${mExp.sumOf { it.amount }.money()}")
+        mInc.take(30).forEach { sb.appendLine("  + ${it.date} (${wd(it.date)}) ${it.source}: ${it.amount.money()}") }
+        sb.appendLine("Month expense total so far: ${mExp.sumOf { it.amount }.money()} after $elapsedDays of $totalDays days")
         sb.appendLine("Expenses by category this month:")
         mExp.groupBy { it.category }
             .map { (c, l) -> c to l.sumOf { e -> e.amount } }
             .sortedByDescending { it.second }
             .forEach { (c, v) -> sb.appendLine("  - ${catName(c)}: ${v.money()}") }
-        sb.appendLine("Expenses by day this month:")
+        sb.appendLine("Expenses by day this month (date, weekday, total):")
         mExp.groupBy { it.date }.toSortedMap()
-            .forEach { (d, l) -> sb.appendLine("  $d: ${l.sumOf { e -> e.amount }.money()}") }
+            .forEach { (d, l) -> sb.appendLine("  $d (${wd(d)}): ${l.sumOf { e -> e.amount }.money()}") }
         sb.appendLine()
-        sb.appendLine("== RECENT EXPENSES (newest first, up to 40) ==")
+        sb.appendLine("== RECENT EXPENSES (newest first, up to 40; date | weekday | category | description | amount) ==")
         state.expenses.sortedByDescending { it.date }.take(40).forEach {
-            sb.appendLine("${it.date} | ${catName(it.category)} | ${it.description.ifBlank { "-" }} | ${it.amount.money()}")
+            sb.appendLine("${it.date} | ${wd(it.date)} | ${catName(it.category)} | ${it.description.ifBlank { "-" }} | ${it.amount.money()}")
         }
-        return sb.toString().take(9000)
+        return sb.toString().take(11000)
     }
 
     suspend fun analyze(provider: String, apiKey: String, prompt: String): Result<String> =
@@ -143,12 +170,39 @@ object Ai {
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-            if (code !in 200..299) throw RuntimeException("HTTP $code ${text.take(300)}")
+            if (code !in 200..299) throw AiHttpException(code, text)
             return text
         } finally {
             conn.disconnect()
         }
     }
+}
+
+/** HTTP failure that keeps the status code + body so the UI can explain it. */
+class AiHttpException(val code: Int, val body: String) :
+    RuntimeException("HTTP $code ${body.take(280)}")
+
+/**
+ * v0.9.1: translate common failures into a human explanation key —
+ * wrong API key, exhausted quota/credits, provider overload, no internet.
+ */
+fun aiErrorHintKey(e: Throwable): String? {
+    if (e is AiHttpException) {
+        val b = e.body.lowercase(Locale.US)
+        return when {
+            e.code == 401 || e.code == 403 ||
+                b.contains("api_key_invalid") || b.contains("api key not valid") ||
+                b.contains("incorrect api key") || b.contains("invalid x-api-key") ||
+                b.contains("authentication") -> "ai_err_key"
+            e.code == 429 || e.code == 402 ||
+                b.contains("quota") || b.contains("rate limit") || b.contains("rate_limit") ||
+                b.contains("credit balance") || b.contains("insufficient_quota") ||
+                b.contains("billing") -> "ai_err_quota"
+            e.code in 500..599 || b.contains("overloaded") -> "ai_err_busy"
+            else -> null
+        }
+    }
+    return if (e is java.io.IOException) "ai_err_net" else null
 }
 
 @Composable
@@ -170,7 +224,16 @@ fun AiAnalysisDialog(
         val prompt = t(tr, "ai_prompt") + "\n\n" + Ai.buildDataSummary(state, sym)
         Ai.analyze(state.aiProvider, state.aiApiKey.trim(), prompt)
             .onSuccess { result = it.trim() }
-            .onFailure { error = "${t(tr, "ai_error")}\n${it.message ?: ""}" }
+            .onFailure { e ->
+                // v0.9.1: explain common failures in plain words first,
+                // then show the technical detail underneath.
+                val hint = aiErrorHintKey(e)?.let { t(tr, it) }
+                error = buildString {
+                    if (hint != null) { append(hint); append("\n\n") }
+                    append(t(tr, "ai_error"))
+                    e.message?.let { append("\n").append(it.take(280)) }
+                }
+            }
     }
 
     AlertDialog(

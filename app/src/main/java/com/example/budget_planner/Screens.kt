@@ -2,12 +2,10 @@
 
 package com.example.budget_planner
 
-import android.Manifest
-import android.content.Intent
-import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,17 +34,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.core.app.NotificationManagerCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.delay
 
 // ── Home (Budget) ─────────────────────────────────────────────────────────────
@@ -280,6 +276,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
 fun StatsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: String) {
     var period    by remember { mutableStateOf("month") }
     var chartMode by remember { mutableStateOf("pie") }
+    var aiConfirm by remember { mutableStateOf(false) }   // v0.9.1: ask first
     var aiOpen    by remember { mutableStateOf(false) }
 
     val filtered by remember { derivedStateOf {
@@ -373,7 +370,7 @@ fun StatsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym:
         // v0.9: AI analysis of the whole budget (month + all time + by day)
         Spacer(Modifier.height(4.dp))
         Button(
-            onClick   = { aiOpen = true },
+            onClick   = { aiConfirm = true },
             modifier  = Modifier.fillMaxWidth().height(50.dp),
             colors    = ButtonDefaults.buttonColors(containerColor = th.accent, contentColor = th.bg),
             shape     = RoundedCornerShape(14.dp),
@@ -387,6 +384,32 @@ fun StatsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym:
         }
     }
 
+    // v0.9.1: double-ask before sending anything to the AI provider
+    if (aiConfirm) {
+        AlertDialog(
+            onDismissRequest = { aiConfirm = false },
+            title = { Text("✨ ${t(tr, "ai_analysis")}", color = th.fg, fontWeight = FontWeight.Bold) },
+            text  = {
+                Text(
+                    t(tr, "ai_confirm_text")
+                        .replace("{provider}", kAiProviders[state.aiProvider] ?: state.aiProvider),
+                    color = th.fg, fontSize = 14.sp, lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { aiConfirm = false; aiOpen = true }) {
+                    Text(t(tr, "yes"), color = th.accent, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { aiConfirm = false }) {
+                    Text(t(tr, "cancel"), color = th.fg.copy(alpha = 0.6f))
+                }
+            },
+            containerColor = th.cardBg,
+            shape          = RoundedCornerShape(24.dp)
+        )
+    }
     if (aiOpen) AiAnalysisDialog(state, th, tr, sym) { aiOpen = false }
 }
 
@@ -530,7 +553,7 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
     var themeExpanded    by remember { mutableStateOf(false) }
     var currExpanded     by remember { mutableStateOf(false) }
     var resetDayExpanded by remember { mutableStateOf(false) }
-    var walletExpanded   by remember { mutableStateOf(false) }
+    var backupExpanded   by remember { mutableStateOf(false) }
     var aiExpanded       by remember { mutableStateOf(false) }
     var aboutExpanded    by remember { mutableStateOf(false) }
 
@@ -651,102 +674,86 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
             }
         }
 
-        // ── v0.9: automatic expenses from Google Wallet payment pop-ups ──
-        item(key = "wallet") {
+        // ── v0.9.1: backup — export / import all data as a JSON file ──
+        item(key = "backup") {
             val ctx = LocalContext.current
-            var accessTick by remember { mutableIntStateOf(0) }
-            val lifecycleOwner = LocalLifecycleOwner.current
-            // Re-check listener access every time the user comes back from system settings
-            DisposableEffect(lifecycleOwner) {
-                val obs = LifecycleEventObserver { _, e ->
-                    if (e == Lifecycle.Event.ON_RESUME) accessTick++
+            var status by remember { mutableStateOf<Pair<String, Boolean>?>(null) }  // msg key to isError
+            var pendingImport by remember { mutableStateOf<AppState?>(null) }
+
+            val exportLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.CreateDocument("application/json")
+            ) { uri ->
+                if (uri != null) {
+                    val ok = runCatching {
+                        ctx.contentResolver.openOutputStream(uri)?.use { os ->
+                            os.write(state.toJson().toByteArray(Charsets.UTF_8))
+                        } ?: error("no stream")
+                    }.isSuccess
+                    status = (if (ok) "export_done" else "import_error") to !ok
                 }
-                lifecycleOwner.lifecycle.addObserver(obs)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
             }
-            val hasAccess = remember(accessTick) {
-                NotificationManagerCompat.getEnabledListenerPackages(ctx).contains(ctx.packageName)
-            }
-            val notifPermLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.RequestPermission()
-            ) { }
-            fun openListenerSettings() {
-                runCatching {
-                    ctx.startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            val importLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.OpenDocument()
+            ) { uri ->
+                if (uri != null) {
+                    val loaded = runCatching {
+                        val text = ctx.contentResolver.openInputStream(uri)
+                            ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                            ?: error("no stream")
+                        AppState.fromJson(text)
+                    }.getOrNull()
+                    if (loaded == null) status = "import_error" to true
+                    else pendingImport = loaded          // ask before replacing everything
                 }
             }
 
             AccordionSection(
-                title    = t(tr, "auto_wallet"),
-                subtitle = if (state.autoWalletEnabled) catDisplay(state.resolveAutoCategory(), tr)
-                           else t(tr, "off"),
-                expanded = walletExpanded,
+                title    = t(tr, "backup"),
+                subtitle = t(tr, "backup_sub"),
+                expanded = backupExpanded,
                 th       = th,
-                onToggle = { walletExpanded = !walletExpanded }
+                onToggle = { backupExpanded = !backupExpanded; status = null }
             ) {
                 Text(
-                    t(tr, "auto_wallet_desc"),
+                    t(tr, "backup_desc"),
                     fontSize = 12.sp,
                     color    = th.fg.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = 10.dp)
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick   = { exportLauncher.launch("flowi_backup_${todayStr()}.json") },
+                        modifier  = Modifier.weight(1f).height(44.dp),
+                        colors    = ButtonDefaults.buttonColors(containerColor = th.accent, contentColor = th.bg),
+                        shape     = RoundedCornerShape(12.dp),
+                        elevation = ButtonDefaults.buttonElevation(0.dp)
+                    ) { Text(t(tr, "export_data"), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                    Button(
+                        onClick   = { importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
+                        modifier  = Modifier.weight(1f).height(44.dp),
+                        colors    = ButtonDefaults.buttonColors(containerColor = th.fg.copy(alpha = 0.08f), contentColor = th.fg),
+                        shape     = RoundedCornerShape(12.dp),
+                        elevation = ButtonDefaults.buttonElevation(0.dp)
+                    ) { Text(t(tr, "import_data"), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                }
+                status?.let { (key, isErr) ->
+                    Spacer(Modifier.height(8.dp))
                     Text(
-                        t(tr, "auto_wallet_switch"),
-                        color = th.fg, fontSize = 14.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Switch(
-                        checked = state.autoWalletEnabled,
-                        onCheckedChange = { on ->
-                            state.autoWalletEnabled = on
-                            if (on) {
-                                // Ask the phone for everything needed right away:
-                                // permission to post confirmations + access to read pop-ups
-                                if (Build.VERSION.SDK_INT >= 33) {
-                                    notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                }
-                                if (!hasAccess) openListenerSettings()
-                            }
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor   = th.accent,
-                            checkedThumbColor   = th.bg,
-                            uncheckedTrackColor = th.fg.copy(alpha = 0.15f)
-                        )
+                        t(tr, key),
+                        fontSize = 12.sp,
+                        color    = if (isErr) kBad else kGood
                     )
                 }
-                if (state.autoWalletEnabled) {
-                    Spacer(Modifier.height(6.dp))
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background((if (hasAccess) kGood else kBad).copy(alpha = 0.10f))
-                            .clickable { if (!hasAccess) openListenerSettings() }
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            if (hasAccess) t(tr, "wallet_access_ok") else t(tr, "wallet_access_missing"),
-                            fontSize = 12.sp,
-                            color    = if (hasAccess) kGood else kBad
-                        )
+            }
+
+            // Confirm: importing replaces ALL current data
+            pendingImport?.let { imported ->
+                ConfirmDialog(t(tr, "import_confirm"), tr, th) { ok ->
+                    if (ok) {
+                        state.replaceFrom(imported)
+                        status = "import_done" to false
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        t(tr, "auto_wallet_target"),
-                        fontSize = 12.sp,
-                        color    = th.fg.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                    (state.orderedCategoryNames() + "__unallocated__").forEach { name ->
-                        SquareOptionRow(
-                            label    = catDisplay(name, tr),
-                            selected = state.autoWalletCategory == name,
-                            th       = th
-                        ) { state.autoWalletCategory = name }
-                    }
+                    pendingImport = null
                 }
             }
         }
@@ -780,7 +787,19 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
                     singleLine = true,
                     colors = otfColors(th),
                     shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        // v0.9.1: one tap wipes the stored key
+                        if (state.aiApiKey.isNotEmpty()) {
+                            Icon(
+                                Icons.Default.Delete, contentDescription = t(tr, "delete"),
+                                tint = kBad.copy(alpha = 0.8f),
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clickable { state.aiApiKey = "" }
+                            )
+                        }
+                    }
                 )
             }
         }
@@ -788,7 +807,7 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
         item(key = "about") {
             AccordionSection(
                 title    = t(tr, "about"),
-                subtitle = "Flowi v0.9",
+                subtitle = "Flowi v0.9.1",
                 expanded = aboutExpanded,
                 th       = th,
                 onToggle = { aboutExpanded = !aboutExpanded }
@@ -846,15 +865,16 @@ fun AboutContent(th: AppThemeData, tr: Map<String, String>) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment     = Alignment.CenterVertically
         ) {
-            Box(
-                Modifier.size(48.dp).background(th.accent, RoundedCornerShape(14.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("F", color = th.bg, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
-            }
+            // v0.9.1: real app icon instead of the "F" placeholder
+            Image(
+                painter            = painterResource(R.drawable.flowi_icon),
+                contentDescription = null,
+                contentScale       = ContentScale.Crop,
+                modifier           = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+            )
             Column {
                 Text("Flowi", fontWeight = FontWeight.Bold, color = th.fg, fontSize = 17.sp)
-                Text("${t(tr,"version")} 0.9", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
+                Text("${t(tr,"version")} 0.9.1", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
             }
         }
 
