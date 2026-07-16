@@ -72,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -231,7 +232,9 @@ fun CategoryCard(
     val overBudget = rem < 0.0
     val exactSpent = !overBudget && rem == 0.0 && spent > 0 && alloc > 0
     val target     = if (alloc > 0) (spent / alloc).toFloat().coerceIn(0f, 1f) else 0f
-    val progress by animateFloatAsState(
+    // Kept as State objects: their .value is read inside drawBehind only, so the
+    // bar animates at the draw phase without recomposing the card every frame.
+    val progressState = animateFloatAsState(
         target, spring(stiffness = Spring.StiffnessLow), label = "catProgress"
     )
     val stateColor = when {
@@ -239,7 +242,7 @@ fun CategoryCard(
         exactSpent -> kGood
         else       -> th.accent
     }
-    val barColor by animateColorAsState(stateColor, tween(300), label = "catBarColor")
+    val barColorState = animateColorAsState(stateColor, tween(300), label = "catBarColor")
     val cardElev by animateFloatAsState(if (isDragging) 12f else 0f, tween(180), label = "catElev")
 
     Card(
@@ -272,22 +275,22 @@ fun CategoryCard(
                 }
             }
 
-            // Animated progress bar
+            // Animated progress bar (fill + color read only at draw time)
             Box(
                 Modifier
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(50))
                     .background(th.fg.copy(alpha = 0.08f))
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(progress)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(50))
-                        .background(barColor)
-                )
-            }
+                    .drawBehind {
+                        val w = size.width * progressState.value
+                        if (w > 0f) drawRoundRect(
+                            color        = barColorState.value,
+                            size         = Size(w, size.height),
+                            cornerRadius = CornerRadius(size.height / 2f)
+                        )
+                    }
+            )
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
@@ -640,21 +643,20 @@ fun SwipeRevealBox(
     }
 
     Box(modifier.fillMaxWidth()) {
-        // Action buttons behind the card, right side; fade + grow as revealed
-        val progress = (-offsetX.value / revealPx).coerceIn(0f, 1f)
-        if (progress > 0.01f) {
-            Row(
-                Modifier
-                    .matchParentSize()
-                    .graphicsLayer {
-                        alpha  = progress
-                        scaleX = 0.85f + 0.15f * progress
-                        scaleY = 0.85f + 0.15f * progress
-                    },
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment     = Alignment.CenterVertically
-            ) { actions() }
-        }
+        // Action buttons behind the card. The reveal fraction is computed inside
+        // graphicsLayer, so swiping animates at the draw phase only.
+        Row(
+            Modifier
+                .matchParentSize()
+                .graphicsLayer {
+                    val progress = (-offsetX.value / revealPx).coerceIn(0f, 1f)
+                    alpha  = progress
+                    scaleX = 0.85f + 0.15f * progress
+                    scaleY = 0.85f + 0.15f * progress
+                },
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment     = Alignment.CenterVertically
+        ) { actions() }
 
         Box(
             Modifier

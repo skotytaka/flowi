@@ -67,6 +67,11 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
     } }
     // v0.9: categories follow the user's own drag & drop order
     val catNames by remember { derivedStateOf { state.orderedCategoryNames() } }
+    // v0.9.7: per-category totals for the active period, computed once per data
+    // change instead of filtering the whole expense list inside every card
+    val spentByCat by remember { derivedStateOf {
+        pExp.groupBy { it.category }.mapValues { (_, l) -> l.sumOf { e -> e.amount } }
+    } }
 
     val pExpSum      = pExp.sumOf { it.amount }
     val pIncSum      = pInc.sumOf { it.amount }
@@ -76,7 +81,6 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
     val pctBase      = percentBaseFor(state.categories, periodIncome, period)
     val unallocAlloc = computeUnallocatedFor(state.categories, periodIncome, period)
     val unallocSpent = state.categories["__unallocated__"]?.spent ?: 0.0
-    val shownTotal   = animateMoney(state.totalMoney)
 
     // Long-press drag & drop between category cards
     val listState = rememberLazyListState()
@@ -113,8 +117,10 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
             ) { period = it }
         }
 
-        // Gradient balance header with an animated counter
+        // Gradient balance header with an animated counter. animateMoney lives
+        // inside this item, so the count-up animation recomposes only this card.
         item(key = "balance") {
+            val shownTotal = animateMoney(state.totalMoney)
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -171,7 +177,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
         items(catNames, key = { kCatKeyPrefix + it }) { name ->
             val cat = state.categories[name] ?: return@items
             val dispSpent = if (period == "all") cat.spent
-                            else pExp.filter { it.category == name }.sumOf { it.amount }
+                            else spentByCat[name] ?: 0.0
             val modeStrRaw = when (cat.mode) {
                 "percentage" -> "${cat.value.toInt()}%"
                 "monthly"    -> "${"%.0f".format(cat.value)}$sym${t(tr,"per_month")}"
@@ -243,7 +249,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
         if (unallocAlloc > 0) {
             item(key = "__unallocated__") {
                 val dispSpent = if (period == "all") unallocSpent
-                                else pExp.filter { it.category == "__unallocated__" }.sumOf { it.amount }
+                                else spentByCat["__unallocated__"] ?: 0.0
                 CategoryCard(
                     name     = t(tr,"unallocated"),
                     modeStr  = "~",
@@ -815,7 +821,7 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
         item(key = "about") {
             AccordionSection(
                 title    = t(tr, "about"),
-                subtitle = "Flowi v0.9.6",
+                subtitle = "Flowi v0.9.7",
                 expanded = aboutExpanded,
                 th       = th,
                 onToggle = { aboutExpanded = !aboutExpanded }
@@ -882,7 +888,7 @@ fun AboutContent(th: AppThemeData, tr: Map<String, String>, logoRes: Int) {
             )
             Column {
                 Text("Flowi", fontWeight = FontWeight.Bold, color = th.fg, fontSize = 17.sp)
-                Text("${t(tr,"version")} 0.9.6", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
+                Text("${t(tr,"version")} 0.9.7", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
             }
         }
 

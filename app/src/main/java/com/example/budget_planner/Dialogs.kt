@@ -556,7 +556,9 @@ fun SplitExpenseDialog(
         val od = if (cat == "__unallocated__") false else state.categories[cat]?.overdraft ?: false
         return spendStatus(remainingByCat[cat] ?: 0.0, enteredByCat[cat] ?: 0.0, od)
     }
-    val anyBlocked = parts.any { statusOf(it.first) == 2 }
+    // One status per category per recomposition — the rows below just look it up
+    val statusByCat = remainingByCat.keys.associateWith { statusOf(it) }
+    val anyBlocked  = statusByCat.values.any { it == 2 }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -609,8 +611,8 @@ fun SplitExpenseDialog(
                         Text(
                             "${t(tr,"remaining")}: ${(remainingByCat[part.first] ?: 0.0).money()} $sym",
                             fontSize = 10.sp,
-                            color = if (statusOf(part.first) == 0) th.fg.copy(alpha = 0.45f)
-                                    else spendStatusColor(statusOf(part.first), th),
+                            color = if ((statusByCat[part.first] ?: 0) == 0) th.fg.copy(alpha = 0.45f)
+                                    else spendStatusColor(statusByCat[part.first] ?: 0, th),
                             modifier = Modifier.padding(start = 2.dp, top = 2.dp)
                         )
                         }
@@ -622,7 +624,7 @@ fun SplitExpenseDialog(
                             singleLine = true, colors = otfColors(th),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.width(104.dp),
-                            isError = statusOf(part.first) == 2
+                            isError = (statusByCat[part.first] ?: 0) == 2
                         )
                         if (parts.size > 2) {
                             Box(
@@ -635,7 +637,7 @@ fun SplitExpenseDialog(
                             ) { Text("×", color = kBad, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
                         }
                     }
-                    when (statusOf(part.first)) {
+                    when (statusByCat[part.first] ?: 0) {
                         2 -> Text(t(tr,"over_error"), fontSize = 10.sp, color = kBad)
                         1 -> Text(t(tr,"over_warn"), fontSize = 10.sp, color = kWarn)
                     }
