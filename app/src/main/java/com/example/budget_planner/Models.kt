@@ -263,6 +263,39 @@ fun AppState.removeIncome(idx: Int) {
     incomes.removeAt(idx)
 }
 
+/**
+ * v0.9.6: money left in [target] for a period — allocation minus spent.
+ * Can be negative when the category is already over budget.
+ */
+fun AppState.remainingFor(target: String, period: String = "all"): Double {
+    val income = if (period == "all") totalMoney
+        else incomes.filter { filterByPeriod(it.date, period, monthResetDay) }.sumOf { it.amount }
+    val base = percentBaseFor(categories, income, period)
+    val alloc = if (target == "__unallocated__") computeUnallocatedFor(categories, income, period)
+        else categories[target]?.allocatedFor(period, base) ?: 0.0
+    val spent = if (period == "all") categories[target]?.spent ?: 0.0
+        else expenses.filter { it.category == target && filterByPeriod(it.date, period, monthResetDay) }
+            .sumOf { it.amount }
+    return alloc - spent
+}
+
+/**
+ * v0.9.6: how an entered amount relates to what's left.
+ * 0 = fits; 1 = exceeds but overdraft is ON (warn, allowed);
+ * 2 = exceeds and overdraft is OFF (error, blocked).
+ */
+fun spendStatus(remaining: Double, amount: Double, overdraft: Boolean): Int = when {
+    amount <= remaining + 1e-9 -> 0
+    overdraft                  -> 1
+    else                       -> 2
+}
+
+/** Sum of all percentage-category values, optionally excluding one (when editing it). */
+fun AppState.percentSumExcluding(exclude: String?): Double =
+    categories.values
+        .filter { it.mode == "percentage" && it.name != "__unallocated__" && it.name != exclude }
+        .sumOf { it.value }
+
 /** Create a new category, or update/rename an existing one when [oldName] is given. */
 fun AppState.upsertCategory(
     oldName: String?, name: String, value: Double, mode: String,
@@ -270,6 +303,8 @@ fun AppState.upsertCategory(
 ) {
     if (name.isBlank() || value <= 0) return
     if (oldName == null && categories.containsKey(name)) return   // no duplicates
+    // v0.9.5: percentage categories can never exceed 100% in total
+    if (mode == "percentage" && percentSumExcluding(oldName) + value > 100.0 + 1e-6) return
     val keepSpent = oldName?.let { categories[it]?.spent } ?: 0.0
     if (oldName != null && oldName != name) {
         // Rename: move every expense recorded under the old name

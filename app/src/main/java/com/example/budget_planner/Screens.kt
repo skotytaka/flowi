@@ -536,7 +536,7 @@ fun HistoryScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sy
     }
 
     // ── Dialogs ──
-    editExpIdx?.let { idx -> EditExpenseDialog(idx, state, tr, th) { editExpIdx = null } }
+    editExpIdx?.let { idx -> EditExpenseDialog(idx, state, tr, th, sym) { editExpIdx = null } }
     delExpIdx?.let { idx ->
         ConfirmDialog(t(tr,"confirm_delete_expense"), tr, th) { ok ->
             if (ok) state.removeExpense(idx)
@@ -815,7 +815,7 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
         item(key = "about") {
             AccordionSection(
                 title    = t(tr, "about"),
-                subtitle = "Flowi v0.9.3",
+                subtitle = "Flowi v0.9.6",
                 expanded = aboutExpanded,
                 th       = th,
                 onToggle = { aboutExpanded = !aboutExpanded }
@@ -882,7 +882,7 @@ fun AboutContent(th: AppThemeData, tr: Map<String, String>, logoRes: Int) {
             )
             Column {
                 Text("Flowi", fontWeight = FontWeight.Bold, color = th.fg, fontSize = 17.sp)
-                Text("${t(tr,"version")} 0.9.3", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
+                Text("${t(tr,"version")} 0.9.6", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
             }
         }
 

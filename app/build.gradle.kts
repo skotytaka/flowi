@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.budget_planner"
         minSdk = 24
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.9.3"
+        versionCode = 12
+        versionName = "0.9.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

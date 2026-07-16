@@ -90,6 +90,7 @@ fun CategoryDialog(
     var mode      by remember { mutableStateOf(existing?.mode ?: "percentage") }
     var overdraft by remember { mutableStateOf(existing?.overdraft ?: false) }
     var kind      by remember { mutableStateOf(existing?.kind ?: "spending") }   // v0.9.2
+    var pctError  by remember { mutableStateOf(false) }                           // v0.9.5
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -116,7 +117,7 @@ fun CategoryDialog(
                     ),
                     selectedKey = mode,
                     th = th
-                ) { mode = it }
+                ) { mode = it; pctError = false }
                 if (mode == "percentage") {
                     Text(t(tr,"pct_hint"), fontSize = 11.sp, color = th.fg.copy(alpha = 0.45f))
                 }
@@ -134,18 +135,27 @@ fun CategoryDialog(
                     Text(t(tr,"kind_hint"), fontSize = 11.sp, color = th.fg.copy(alpha = 0.45f))
                 }
                 OutlinedTextField(
-                    value = valueStr, onValueChange = { valueStr = it },
+                    value = valueStr, onValueChange = { valueStr = it; pctError = false },
                     label = { Text(t(tr,"category_value")) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true, colors = otfColors(th),
                     shape = RoundedCornerShape(12.dp),
+                    isError = pctError,
                     trailingIcon = {
                         Text(
                             if (mode == "percentage") "%" else sym,
-                            color = th.accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold
+                            color = if (pctError) kBad else th.accent,
+                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold
                         )
                     }
                 )
+                if (pctError) {
+                    val left = (100.0 - state.percentSumExcluding(editName)).coerceAtLeast(0.0)
+                    Text(
+                        t(tr,"pct_limit_error").replace("{left}", left.money()),
+                        fontSize = 11.sp, color = kBad
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(
                         checked         = overdraft,
@@ -158,7 +168,13 @@ fun CategoryDialog(
         },
         confirmButton  = {
             TextButton(onClick = {
-                state.upsertCategory(editName, name.trim(), valueStr.toDoubleOrNull() ?: 0.0, mode, overdraft, kind)
+                val v = valueStr.toDoubleOrNull() ?: 0.0
+                // v0.9.5: hard 100% ceiling for percentage categories
+                if (mode == "percentage" && v + state.percentSumExcluding(editName) > 100.0 + 1e-6) {
+                    pctError = true
+                    return@TextButton
+                }
+                state.upsertCategory(editName, name.trim(), v, mode, overdraft, kind)
                 onDismiss()
             }) { Text(t(tr,"ok"), color = th.accent, fontWeight = FontWeight.SemiBold) }
         },
@@ -185,18 +201,10 @@ fun SpendDialog(
     period: String = "all",      // v0.9.3: limits follow the Budget screen filter
     onDismiss: () -> Unit
 ) {
-    val periodIncome = if (period == "all") state.totalMoney
-        else state.incomes.filter { filterByPeriod(it.date, period, state.monthResetDay) }.sumOf { it.amount }
-    fun spentOf(cat: String): Double =
-        if (period == "all") state.categories[cat]?.spent ?: 0.0
-        else state.expenses
-            .filter { it.category == cat && filterByPeriod(it.date, period, state.monthResetDay) }
-            .sumOf { it.amount }
-    val unallocAlloc = computeUnallocatedFor(state.categories, periodIncome, period)
-    val unallocSpent = spentOf("__unallocated__")
     val options = remember {
         val named = state.orderedCategoryNames()
-        if (unallocAlloc > 0 || named.isEmpty()) named + "__unallocated__" else named
+        val unallocAll = computeUnallocatedFor(state.categories, state.totalMoney, "all")
+        if (unallocAll > 0 || named.isEmpty()) named + "__unallocated__" else named
     }
     var target    by remember { mutableStateOf(fixedTarget ?: options.first()) }
     var amountStr by remember { mutableStateOf("") }
@@ -204,13 +212,13 @@ fun SpendDialog(
     var dateStr   by remember { mutableStateOf("") }          // "" = today
     var expanded  by remember { mutableStateOf(false) }
 
-    val pctBase = percentBaseFor(state.categories, periodIncome, period)
-    val maxAmt = if (target == "__unallocated__")
-        (unallocAlloc - unallocSpent).coerceAtLeast(0.0)
-    else
-        state.categories[target]?.let {
-            (it.allocatedFor(period, pctBase) - spentOf(target)).coerceAtLeast(0.0)
-        } ?: 0.0
+    // v0.9.6: live remaining + overdraft status for the chosen category
+    val remaining = state.remainingFor(target, period)
+    val maxAmt    = remaining.coerceAtLeast(0.0)
+    val amtVal    = amountStr.toDoubleOrNull() ?: 0.0
+    val odOn      = if (target == "__unallocated__") false
+                    else state.categories[target]?.overdraft ?: false
+    val status    = spendStatus(remaining, amtVal, odOn)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -249,16 +257,16 @@ fun SpendDialog(
                         }
                     }
                 }
-                // Info chip showing the max available amount
+                // Info chip: remaining money, colored by overdraft status
                 Box(
                     Modifier
-                        .background(th.accent.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                        .background(spendStatusColor(status, th).copy(alpha = 0.1f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        "${t(tr,"max")}: ${maxAmt.money()} $sym",
+                        "${t(tr,"remaining")}: ${remaining.money()} $sym",
                         fontSize = 12.sp,
-                        color    = th.accent,
+                        color    = spendStatusColor(status, th),
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -267,8 +275,13 @@ fun SpendDialog(
                     label = { Text(t(tr,"amount")) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true, colors = otfColors(th),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    isError = status == 2
                 )
+                when (status) {
+                    2 -> Text(t(tr,"over_error"), fontSize = 11.sp, color = kBad)
+                    1 -> Text(t(tr,"over_warn"), fontSize = 11.sp, color = kWarn)
+                }
                 OutlinedTextField(
                     value = desc, onValueChange = { desc = it },
                     label = { Text(t(tr,"description")) },
@@ -283,6 +296,7 @@ fun SpendDialog(
         },
         confirmButton  = {
             TextButton(onClick = {
+                if (status == 2) return@TextButton   // overdraft off — not enough left
                 state.recordExpense(target, amountStr.toDoubleOrNull() ?: 0.0, desc, dateStr)
                 onDismiss()
             }) { Text(t(tr,"ok"), color = th.accent, fontWeight = FontWeight.SemiBold) }
@@ -301,6 +315,7 @@ fun EditExpenseDialog(
     state: AppState,
     tr: Map<String, String>,
     th: AppThemeData,
+    sym: String,
     onDismiss: () -> Unit
 ) {
     val expense = state.expenses.getOrNull(idx)
@@ -316,6 +331,14 @@ fun EditExpenseDialog(
     var desc      by remember { mutableStateOf(expense.description) }
     var date      by remember { mutableStateOf(expense.date) }
     var expanded  by remember { mutableStateOf(false) }
+
+    // v0.9.6: overdraft check — the original amount returns to the pool first
+    val remaining = state.remainingFor(category, "all") +
+        (if (category == expense.category) expense.amount else 0.0)
+    val amtVal = amountStr.toDoubleOrNull() ?: 0.0
+    val odOn   = if (category == "__unallocated__") false
+                 else state.categories[category]?.overdraft ?: false
+    val status = spendStatus(remaining, amtVal, odOn)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -351,6 +374,15 @@ fun EditExpenseDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true, colors = otfColors(th), shape = RoundedCornerShape(12.dp)
                 )
+                Text(
+                    "${t(tr,"remaining")}: ${remaining.money()} $sym",
+                    fontSize = 11.sp,
+                    color = if (status == 0) th.fg.copy(alpha = 0.45f) else spendStatusColor(status, th)
+                )
+                when (status) {
+                    2 -> Text(t(tr,"over_error"), fontSize = 11.sp, color = kBad)
+                    1 -> Text(t(tr,"over_warn"), fontSize = 11.sp, color = kWarn)
+                }
                 OutlinedTextField(
                     value = desc, onValueChange = { desc = it }, label = { Text(t(tr,"description")) },
                     singleLine = true, colors = otfColors(th), shape = RoundedCornerShape(12.dp)
@@ -363,6 +395,7 @@ fun EditExpenseDialog(
         },
         confirmButton  = {
             TextButton(onClick = {
+                if (status == 2) return@TextButton   // overdraft off — not enough left
                 state.updateExpense(
                     idx, category,
                     amountStr.toDoubleOrNull() ?: expense.amount,
@@ -485,6 +518,17 @@ fun SplitExpenseDialog(
     val amounts = parts.map { it.second.toDoubleOrNull() ?: 0.0 }
     val total   = amounts.sum()
 
+    // v0.9.6: remaining per category; parts hitting the SAME category are summed
+    val remainingByCat = parts.map { it.first }.distinct()
+        .associateWith { state.remainingFor(it, "all") }
+    val enteredByCat = parts.groupBy { it.first }
+        .mapValues { (_, l) -> l.sumOf { it.second.toDoubleOrNull() ?: 0.0 } }
+    fun statusOf(cat: String): Int {
+        val od = if (cat == "__unallocated__") false else state.categories[cat]?.overdraft ?: false
+        return spendStatus(remainingByCat[cat] ?: 0.0, enteredByCat[cat] ?: 0.0, od)
+    }
+    val anyBlocked = parts.any { statusOf(it.first) == 2 }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title  = { Text(t(tr,"split_expense"), color = th.fg, fontWeight = FontWeight.Bold) },
@@ -498,7 +542,8 @@ fun SplitExpenseDialog(
                         verticalAlignment     = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Box(Modifier.weight(1f)) {
+                        Column(Modifier.weight(1f)) {
+                        Box {
                             Row(
                                 Modifier
                                     .fillMaxWidth()
@@ -530,6 +575,14 @@ fun SplitExpenseDialog(
                                 }
                             }
                         }
+                        Text(
+                            "${t(tr,"remaining")}: ${(remainingByCat[part.first] ?: 0.0).money()} $sym",
+                            fontSize = 10.sp,
+                            color = if (statusOf(part.first) == 0) th.fg.copy(alpha = 0.45f)
+                                    else spendStatusColor(statusOf(part.first), th),
+                            modifier = Modifier.padding(start = 2.dp, top = 2.dp)
+                        )
+                        }
                         OutlinedTextField(
                             value = part.second,
                             onValueChange = { parts[i] = parts[i].first to it },
@@ -537,7 +590,8 @@ fun SplitExpenseDialog(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true, colors = otfColors(th),
                             shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.width(104.dp)
+                            modifier = Modifier.width(104.dp),
+                            isError = statusOf(part.first) == 2
                         )
                         if (parts.size > 2) {
                             Box(
@@ -549,6 +603,10 @@ fun SplitExpenseDialog(
                                 contentAlignment = Alignment.Center
                             ) { Text("×", color = kBad, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
                         }
+                    }
+                    when (statusOf(part.first)) {
+                        2 -> Text(t(tr,"over_error"), fontSize = 10.sp, color = kBad)
+                        1 -> Text(t(tr,"over_warn"), fontSize = 10.sp, color = kWarn)
                     }
                 }
 
@@ -590,7 +648,7 @@ fun SplitExpenseDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                if (amounts.any { it <= 0.0 }) return@TextButton   // every part needs an amount
+                if (amounts.any { it <= 0.0 } || anyBlocked) return@TextButton
                 val splitId = "s${System.currentTimeMillis()}"
                 parts.forEach { (cat, amtStr) ->
                     state.recordExpense(cat, amtStr.toDoubleOrNull() ?: 0.0, desc, dateStr, splitId)

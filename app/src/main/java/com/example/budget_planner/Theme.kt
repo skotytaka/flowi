@@ -35,6 +35,14 @@ fun flowiLogoRes(themeName: String): Int =
 // Semantic colors shared by every theme
 val kGood = Color(0xFF34C759)   // income / positive
 val kBad  = Color(0xFFFF3B30)   // expense / negative / destructive
+val kWarn = Color(0xFFFFB300)   // v0.9.6: overdraft warning (amber works on all themes)
+
+/** 0 = fine, 1 = overdraft warning (allowed), 2 = blocked error. */
+fun spendStatusColor(status: Int, th: AppThemeData): Color = when (status) {
+    2    -> kBad
+    1    -> kWarn
+    else -> th.accent
+}
 
 // Palette used by charts and category color dots
 val kChartColors = listOf(
