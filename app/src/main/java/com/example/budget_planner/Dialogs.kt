@@ -17,6 +17,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -91,6 +93,8 @@ fun CategoryDialog(
     var overdraft by remember { mutableStateOf(existing?.overdraft ?: false) }
     var kind      by remember { mutableStateOf(existing?.kind ?: "spending") }   // v0.9.2
     var pctError  by remember { mutableStateOf(false) }                           // v0.9.5
+    var shakeTick by remember { mutableIntStateOf(0) }                             // v0.9.6
+    val haptic = LocalHapticFeedback.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -101,7 +105,10 @@ fun CategoryDialog(
             )
         },
         text   = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                Modifier.shakeOnTrigger(shakeTick),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 OutlinedTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text(t(tr,"category_name")) },
@@ -172,6 +179,8 @@ fun CategoryDialog(
                 // v0.9.5: hard 100% ceiling for percentage categories
                 if (mode == "percentage" && v + state.percentSumExcluding(editName) > 100.0 + 1e-6) {
                     pctError = true
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    shakeTick++          // no-no
                     return@TextButton
                 }
                 state.upsertCategory(editName, name.trim(), v, mode, overdraft, kind)
@@ -211,6 +220,8 @@ fun SpendDialog(
     var desc      by remember { mutableStateOf("") }
     var dateStr   by remember { mutableStateOf("") }          // "" = today
     var expanded  by remember { mutableStateOf(false) }
+    var shakeTick by remember { mutableIntStateOf(0) }        // v0.9.6
+    val haptic = LocalHapticFeedback.current
 
     // v0.9.6: live remaining + overdraft status for the chosen category
     val remaining = state.remainingFor(target, period)
@@ -229,7 +240,10 @@ fun SpendDialog(
             )
         },
         text   = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                Modifier.shakeOnTrigger(shakeTick),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 // Category picker — only for quick-add
                 if (fixedTarget == null) {
                     Box {
@@ -296,7 +310,11 @@ fun SpendDialog(
         },
         confirmButton  = {
             TextButton(onClick = {
-                if (status == 2) return@TextButton   // overdraft off — not enough left
+                if (status == 2) {                   // overdraft off — not enough left
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    shakeTick++          // no-no
+                    return@TextButton
+                }
                 state.recordExpense(target, amountStr.toDoubleOrNull() ?: 0.0, desc, dateStr)
                 onDismiss()
             }) { Text(t(tr,"ok"), color = th.accent, fontWeight = FontWeight.SemiBold) }
@@ -331,6 +349,8 @@ fun EditExpenseDialog(
     var desc      by remember { mutableStateOf(expense.description) }
     var date      by remember { mutableStateOf(expense.date) }
     var expanded  by remember { mutableStateOf(false) }
+    var shakeTick by remember { mutableIntStateOf(0) }        // v0.9.6
+    val haptic = LocalHapticFeedback.current
 
     // v0.9.6: overdraft check — the original amount returns to the pool first
     val remaining = state.remainingFor(category, "all") +
@@ -344,7 +364,10 @@ fun EditExpenseDialog(
         onDismissRequest = onDismiss,
         title  = { Text(t(tr,"edit_expense"), color = th.fg, fontWeight = FontWeight.Bold) },
         text   = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                Modifier.shakeOnTrigger(shakeTick),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Box {
                     OutlinedTextField(
                         value = catDisplay(category, tr), onValueChange = {},
@@ -395,7 +418,11 @@ fun EditExpenseDialog(
         },
         confirmButton  = {
             TextButton(onClick = {
-                if (status == 2) return@TextButton   // overdraft off — not enough left
+                if (status == 2) {                   // overdraft off — not enough left
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    shakeTick++          // no-no
+                    return@TextButton
+                }
                 state.updateExpense(
                     idx, category,
                     amountStr.toDoubleOrNull() ?: expense.amount,
@@ -514,6 +541,8 @@ fun SplitExpenseDialog(
     var desc    by remember { mutableStateOf("") }
     var dateStr by remember { mutableStateOf("") }            // "" = today
     var menuFor by remember { mutableStateOf<Int?>(null) }
+    var shakeTick by remember { mutableIntStateOf(0) }        // v0.9.6
+    val haptic = LocalHapticFeedback.current
 
     val amounts = parts.map { it.second.toDoubleOrNull() ?: 0.0 }
     val total   = amounts.sum()
@@ -534,7 +563,9 @@ fun SplitExpenseDialog(
         title  = { Text(t(tr,"split_expense"), color = th.fg, fontWeight = FontWeight.Bold) },
         text   = {
             Column(
-                Modifier.verticalScroll(rememberScrollState()),
+                Modifier
+                    .shakeOnTrigger(shakeTick)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 parts.forEachIndexed { i, part ->
@@ -648,7 +679,11 @@ fun SplitExpenseDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                if (amounts.any { it <= 0.0 } || anyBlocked) return@TextButton
+                if (amounts.any { it <= 0.0 } || anyBlocked) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    shakeTick++          // no-no
+                    return@TextButton
+                }
                 val splitId = "s${System.currentTimeMillis()}"
                 parts.forEach { (cat, amtStr) ->
                     state.recordExpense(cat, amtStr.toDoubleOrNull() ?: 0.0, desc, dateStr, splitId)

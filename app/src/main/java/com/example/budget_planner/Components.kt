@@ -792,6 +792,23 @@ class DragDropState(
 /** LazyColumn item keys for categories are prefixed to avoid clashing with header keys. */
 const val kCatKeyPrefix = "cat::"
 
+// ── "No-no" shake (v0.9.6) ───────────────────────────────────────────────────
+// Bump [trigger] to make the content wobble left-right like a head shake —
+// used by dialogs when OK is pressed while the input is invalid.
+
+@Composable
+fun Modifier.shakeOnTrigger(trigger: Int): Modifier {
+    val shift = remember { Animatable(0f) }
+    LaunchedEffect(trigger) {
+        if (trigger > 0) {
+            listOf(-16f, 14f, -10f, 7f, -4f, 0f).forEach { target ->
+                shift.animateTo(target, tween(45))
+            }
+        }
+    }
+    return this.offset { IntOffset(shift.value.roundToInt(), 0) }
+}
+
 // ── Date picking (v0.9) ──────────────────────────────────────────────────────
 // Replaces the hand-typed "YYYY-MM-DD" fields. The grid intentionally mirrors
 // the "Month Reset Day" grid in Settings that users already know.
