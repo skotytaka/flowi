@@ -26,7 +26,11 @@ val kThemes = mapOf(
     "mandarin"    to AppThemeData(Color(0xFFFFF8F0), Color(0xFFBF5700), Color(0xFFFFFFFF), Color(0xFFFF6D00))
 )
 
-val kThemeKeys = listOf("black", "matcha", "sakura", "cruel_angel", "mandarin")
+val kThemeKeys = listOf("matcha", "black", "sakura", "cruel_angel", "mandarin")
+
+/** v0.9.3: the app avatar follows the theme — white logo on the white theme. */
+fun flowiLogoRes(themeName: String): Int =
+    if (themeName == "matcha") R.drawable.flowi_icon_white else R.drawable.flowi_icon
 
 // Semantic colors shared by every theme
 val kGood = Color(0xFF34C759)   // income / positive

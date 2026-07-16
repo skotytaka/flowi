@@ -53,13 +53,13 @@ object Ai {
         val elapsedDays = (((parseDate(today)?.time ?: startMs) - startMs) / dayMs + 1).coerceAtLeast(1)
         val totalDays = ((((parseDate(mEnd)?.time ?: startMs)) - startMs) / dayMs).coerceAtLeast(1)
 
-        val pctBase = percentBase(state.categories, state.totalMoney)
+        val pctBase = percentBaseFor(state.categories, state.totalMoney, "all")
         fun kindOf(c: String) = state.categories[c]?.kind ?: "spending"
 
         sb.appendLine("CURRENCY: $sym")
         sb.appendLine("TODAY: $today (${SimpleDateFormat("EEEE", Locale.US).format(parseDate(today)!!)})")
         sb.appendLine("BUDGET RULE: the user's budget month restarts on day ${state.monthResetDay} of every calendar month (allocations and \"this month\" totals reset then).")
-        sb.appendLine("ALLOCATION RULE: fixed monthly/annual categories are funded first; percentage categories then share the remaining money (${pctBase.money()}) in their ratio.")
+        sb.appendLine("ALLOCATION RULE: I = income of the viewed period, R = fixed categories, NI = I - R; every percentage category gets its percent of NI. All-time NI right now: ${pctBase.money()}.")
         sb.appendLine("CATEGORY TYPES: SAVINGS categories (emergency funds, investing, etc.) are money the user deliberately sets aside — NOT consumption. Treat them as savings contributions, never as overspending.")
         sb.appendLine("CURRENT BUDGET MONTH: $mStart (inclusive) .. $mEnd (exclusive) — today is day $elapsedDays of $totalDays (${(elapsedDays * 100 / totalDays)}% of the period elapsed).")
         sb.appendLine("CURRENT TOTAL MONEY: ${state.totalMoney.money()}")
@@ -74,9 +74,9 @@ object Ai {
                 else          -> c.mode
             }
             val type = if (c.kind == "saving") "SAVINGS" else "SPENDING"
-            sb.appendLine("- $name [$rule] [type: $type]: allocated now ${c.allocated(state.totalMoney, pctBase).money()}, spent all time ${c.spent.money()}")
+            sb.appendLine("- $name [$rule] [type: $type]: allocated (all time) ${c.allocatedFor("all", pctBase).money()}, spent all time ${c.spent.money()}")
         }
-        val unalloc = computeUnallocated(state.categories, state.totalMoney)
+        val unalloc = computeUnallocatedFor(state.categories, state.totalMoney, "all")
         if (unalloc > 0) {
             val uSpent = state.categories["__unallocated__"]?.spent ?: 0.0
             sb.appendLine("- Unallocated [everything not assigned to a category]: allocated ${unalloc.money()}, spent ${uSpent.money()}")
@@ -98,6 +98,13 @@ object Ai {
         val mInc = state.incomes.filter { it.date >= mStart && it.date < mEnd }
         sb.appendLine("Month income total: ${mInc.sumOf { it.amount }.money()}")
         mInc.take(30).forEach { sb.appendLine("  + ${it.date} (${wd(it.date)}) ${it.source}: ${it.amount.money()}") }
+        val mIncomeTotal = mInc.sumOf { it.amount }
+        val mBase = percentBaseFor(state.categories, mIncomeTotal, "month")
+        sb.appendLine("Month allocation base: income ${mIncomeTotal.money()} - fixed = NI ${mBase.money()}; per-category month allocations:")
+        state.orderedCategoryNames().forEach { name ->
+            val c = state.categories[name] ?: return@forEach
+            sb.appendLine("  - $name: ${c.allocatedFor("month", mBase).money()}")
+        }
         val mSpend = mExp.filter { kindOf(it.category) == "spending" }.sumOf { it.amount }
         val mSave  = mExp.filter { kindOf(it.category) == "saving" }.sumOf { it.amount }
         sb.appendLine("Month real spending so far: ${mSpend.money()} after $elapsedDays of $totalDays days")

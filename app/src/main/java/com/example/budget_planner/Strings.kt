@@ -128,6 +128,8 @@ val kT = mapOf(
         "kind_saving"             to "Savings / Fund",
         "kind_hint"               to "Savings categories count as money set aside — AI analysis won't treat them as overspending.",
         "pct_hint"                to "Percent categories share the money left after fixed-amount ones.",
+        "split_expense"           to "Split Expense",
+        "split_total"             to "Total",
         "ai_prompt"               to "You are a sharp but friendly personal finance analyst for the Flowi budgeting app. Study the budget data below. Note the budget-month rule (the month restarts on the user's chosen reset day), which day of the budget month it is today, and the weekdays of the entries. Reply with: 1) Current budget month — income vs expenses so far, spending pace versus the days already elapsed, biggest categories, any category close to or over its allocation. 2) Patterns — which weekdays or dates the user spends most on, unusual spikes, regular incomes and when they arrive. 3) A forecast to the end of the budget month at the current pace. 4) Three specific, practical recommendations based on these numbers. Be concise (under 400 words), plain text only, no markdown. Respond in English. Categories marked SAVINGS are money deliberately set aside (funds, investments): count them as savings contributions and include a savings rate, never call them overspending."
     ),
     "uk" to mapOf(
@@ -235,6 +237,8 @@ val kT = mapOf(
         "kind_saving"             to "Заощадження / Фонд",
         "kind_hint"               to "Категорії заощаджень — це відкладені гроші: AI-аналіз не вважатиме їх перевитратою.",
         "pct_hint"                to "Відсоткові категорії ділять гроші, що лишилися після фіксованих.",
+        "split_expense"           to "Розділити витрату",
+        "split_total"             to "Разом",
         "ai_prompt"               to "Ти — уважний і доброзичливий фінансовий аналітик застосунку Flowi. Вивчи дані бюджету нижче. Зверни увагу на правило бюджетного місяця (місяць починається заново в обраний користувачем день), який сьогодні день бюджетного місяця та дні тижня записів. У відповіді: 1) Поточний бюджетний місяць — доходи проти витрат, темп витрат відносно днів, що вже минули, найбільші категорії, категорії на межі або понад ліміт. 2) Закономірності — у які дні тижня чи дати найбільше витрат, незвичні сплески, регулярні доходи та коли вони надходять. 3) Прогноз до кінця бюджетного місяця за поточним темпом. 4) Три конкретні практичні поради на основі цих цифр. Лаконічно (до 400 слів), лише простий текст, без markdown. Відповідай українською. Категорії з позначкою SAVINGS — це свідомо відкладені гроші (фонди, інвестиції): рахуй їх як внески в заощадження, вкажи норму заощаджень і ніколи не називай їх перевитратою."
     ),
     "de" to mapOf(
@@ -342,6 +346,8 @@ val kT = mapOf(
         "kind_saving"             to "Sparen / Fonds",
         "kind_hint"               to "Sparkategorien gelten als zurückgelegtes Geld — die KI-Analyse wertet sie nicht als Mehrausgaben.",
         "pct_hint"                to "Prozent-Kategorien teilen sich das Geld, das nach festen Beträgen übrig bleibt.",
+        "split_expense"           to "Ausgabe aufteilen",
+        "split_total"             to "Gesamt",
         "ai_prompt"               to "Du bist ein aufmerksamer, freundlicher Finanzanalyst der Budget-App Flowi. Analysiere die folgenden Budgetdaten. Beachte die Budgetmonats-Regel (der Monat startet am vom Nutzer gewählten Stichtag neu), den heutigen Tag im Budgetmonat und die Wochentage der Einträge. Antworte mit: 1) Aktueller Budgetmonat — Einnahmen vs. Ausgaben, Ausgabentempo im Verhältnis zu den bereits vergangenen Tagen, größte Kategorien, Kategorien nahe am oder über dem Limit. 2) Muster — an welchen Wochentagen oder Daten am meisten ausgegeben wird, ungewöhnliche Ausreißer, regelmäßige Einnahmen und wann sie eintreffen. 3) Prognose bis zum Ende des Budgetmonats beim aktuellen Tempo. 4) Drei konkrete, praktische Empfehlungen auf Basis dieser Zahlen. Kurz (unter 400 Wörter), nur einfacher Text, kein Markdown. Antworte auf Deutsch. Als SAVINGS markierte Kategorien sind bewusst zurückgelegtes Geld (Fonds, Investitionen): zähle sie als Sparbeiträge, nenne eine Sparquote und werte sie nie als Mehrausgaben."
     ),
     "ar" to mapOf(
@@ -449,6 +455,8 @@ val kT = mapOf(
         "kind_saving"             to "ادخار / صندوق",
         "kind_hint"               to "فئات الادخار تُعد أموالاً مدّخرة — لن يعاملها تحليل الذكاء الاصطناعي كإنفاق زائد.",
         "pct_hint"                to "فئات النسبة المئوية تتقاسم المال المتبقي بعد الفئات الثابتة.",
+        "split_expense"           to "تقسيم المصروف",
+        "split_total"             to "الإجمالي",
         "ai_prompt"               to "أنت محلل مالي شخصي دقيق وودود لتطبيق الميزانية Flowi. ادرس بيانات الميزانية أدناه. انتبه إلى قاعدة شهر الميزانية (يبدأ الشهر من جديد في اليوم الذي اختاره المستخدم)، وأي يوم من شهر الميزانية نحن اليوم، وأيام الأسبوع للمعاملات. أجب بما يلي: 1) شهر الميزانية الحالي — الدخل مقابل المصروفات حتى الآن، وسرعة الإنفاق مقارنة بالأيام المنقضية، وأكبر الفئات، والفئات القريبة من حدها أو المتجاوزة له. 2) الأنماط — في أي أيام الأسبوع أو التواريخ يكون الإنفاق أكبر، والارتفاعات غير المعتادة، والدخل المنتظم ومواعيد وصوله. 3) توقع حتى نهاية شهر الميزانية بالوتيرة الحالية. 4) ثلاث توصيات عملية محددة بناءً على هذه الأرقام. باختصار (أقل من 400 كلمة)، نص عادي فقط دون ماركداون. أجب بالعربية. الفئات الموسومة SAVINGS هي أموال مدّخرة عمدًا (صناديق، استثمارات): احسبها مساهمات ادخار واذكر معدل الادخار، ولا تعتبرها إنفاقًا زائدًا أبدًا."
     ),
     "zh" to mapOf(
@@ -556,6 +564,8 @@ val kT = mapOf(
         "kind_saving"             to "储蓄 / 基金",
         "kind_hint"               to "储蓄类别视为存起来的钱——AI 分析不会把它们当作超支。",
         "pct_hint"                to "百分比类别按比例分配扣除固定金额后剩余的钱。",
+        "split_expense"           to "拆分支出",
+        "split_total"             to "合计",
         "ai_prompt"               to "你是预算应用 Flowi 的细致而友好的个人理财分析师。请研究下面的预算数据。注意预算月规则（预算月在用户选择的重置日重新开始）、今天是预算月的第几天，以及各条目的星期几。回答应包括：1）当前预算月——目前的收入与支出、相对已过天数的消费速度、最大的类别、接近或超出额度的类别。2）规律——在星期几或哪些日期花费最多、异常波动、固定收入及其到账时间。3）按当前速度预测到预算月结束的情况。4）基于这些数字的三条具体实用建议。保持简洁（400字以内），仅纯文本，不用 Markdown。请用中文回答。 标记为 SAVINGS 的类别是刻意存起来的钱（基金、投资）：请将其计为储蓄贡献并给出储蓄率，绝不要视为超支。"
     )
 )

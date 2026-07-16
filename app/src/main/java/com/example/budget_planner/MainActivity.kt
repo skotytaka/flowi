@@ -119,6 +119,7 @@ fun FlowiApp(state: AppState, th: AppThemeData, tr: Map<String, String>) {
     var fabOpen      by remember { mutableStateOf(false) }
     var quickIncome  by remember { mutableStateOf(false) }
     var quickExpense by remember { mutableStateOf(false) }
+    var quickSplit   by remember { mutableStateOf(false) }   // v0.9.3
     val sym = kCurrencies[state.currency] ?: "$"
 
     LaunchedEffect(tab) { fabOpen = false }
@@ -132,9 +133,9 @@ fun FlowiApp(state: AppState, th: AppThemeData, tr: Map<String, String>) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // v0.9.1: real app icon instead of the "F" placeholder
+                        // v0.9.3: the avatar follows the theme (white on Matcha)
                         Image(
-                            painter            = painterResource(R.drawable.flowi_icon),
+                            painter            = painterResource(flowiLogoRes(state.themeName)),
                             contentDescription = null,
                             contentScale       = ContentScale.Crop,
                             modifier           = Modifier.size(30.dp).clip(CircleShape)
@@ -185,6 +186,19 @@ fun FlowiApp(state: AppState, th: AppThemeData, tr: Map<String, String>) {
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    AnimatedVisibility(
+                        visible = fabOpen,
+                        enter   = fadeIn(tween(140)) + slideInVertically(tween(140)) { it / 3 },
+                        exit    = fadeOut(tween(120)) + slideOutVertically(tween(120)) { it / 3 }
+                    ) {
+                        ExtendedFloatingActionButton(
+                            text           = { Text(t(tr,"split_expense"), fontSize = 13.sp) },
+                            icon           = { Text("⇄", color = kBad, fontWeight = FontWeight.Bold) },
+                            onClick        = { fabOpen = false; quickSplit = true },
+                            containerColor = th.cardBg,
+                            contentColor   = th.fg
+                        )
+                    }
                     AnimatedVisibility(
                         visible = fabOpen,
                         enter   = fadeIn(tween(160)) + slideInVertically(tween(160)) { it / 3 },
@@ -247,6 +261,7 @@ fun FlowiApp(state: AppState, th: AppThemeData, tr: Map<String, String>) {
     // Quick-add dialogs (opened from the FAB, usable from any screen)
     if (quickIncome)  IncomeDialog(state, tr, th) { quickIncome = false }
     if (quickExpense) SpendDialog(null, state, tr, th, sym) { quickExpense = false }
+    if (quickSplit)   SplitExpenseDialog(state, tr, th, sym) { quickSplit = false }
 }
 
 // ── Custom nav icons (drawn, so no extra icon dependency is needed) ──────────

@@ -3,18 +3,23 @@
 package com.example.budget_planner
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -177,10 +182,18 @@ fun SpendDialog(
     tr: Map<String, String>,
     th: AppThemeData,
     sym: String,
+    period: String = "all",      // v0.9.3: limits follow the Budget screen filter
     onDismiss: () -> Unit
 ) {
-    val unallocAlloc = computeUnallocated(state.categories, state.totalMoney)
-    val unallocSpent = state.categories["__unallocated__"]?.spent ?: 0.0
+    val periodIncome = if (period == "all") state.totalMoney
+        else state.incomes.filter { filterByPeriod(it.date, period, state.monthResetDay) }.sumOf { it.amount }
+    fun spentOf(cat: String): Double =
+        if (period == "all") state.categories[cat]?.spent ?: 0.0
+        else state.expenses
+            .filter { it.category == cat && filterByPeriod(it.date, period, state.monthResetDay) }
+            .sumOf { it.amount }
+    val unallocAlloc = computeUnallocatedFor(state.categories, periodIncome, period)
+    val unallocSpent = spentOf("__unallocated__")
     val options = remember {
         val named = state.orderedCategoryNames()
         if (unallocAlloc > 0 || named.isEmpty()) named + "__unallocated__" else named
@@ -191,11 +204,13 @@ fun SpendDialog(
     var dateStr   by remember { mutableStateOf("") }          // "" = today
     var expanded  by remember { mutableStateOf(false) }
 
-    val pctBase = percentBase(state.categories, state.totalMoney)
+    val pctBase = percentBaseFor(state.categories, periodIncome, period)
     val maxAmt = if (target == "__unallocated__")
         (unallocAlloc - unallocSpent).coerceAtLeast(0.0)
     else
-        state.categories[target]?.let { (it.allocated(state.totalMoney, pctBase) - it.spent).coerceAtLeast(0.0) } ?: 0.0
+        state.categories[target]?.let {
+            (it.allocatedFor(period, pctBase) - spentOf(target)).coerceAtLeast(0.0)
+        } ?: 0.0
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -434,5 +449,159 @@ fun ConfirmDialog(message: String, tr: Map<String, String>, th: AppThemeData, on
         },
         containerColor   = th.cardBg,
         shape            = RoundedCornerShape(24.dp)
+    )
+}
+
+/**
+ * v0.9.3: split one purchase across several categories. Each part has its own
+ * category + amount; description and date are shared; the total is computed
+ * live so the user always sees what the parts add up to. Every part is stored
+ * as a normal expense carrying a common splitId (marked ⇄ in History).
+ */
+@Composable
+fun SplitExpenseDialog(
+    state: AppState,
+    tr: Map<String, String>,
+    th: AppThemeData,
+    sym: String,
+    onDismiss: () -> Unit
+) {
+    val unallocAlloc = computeUnallocatedFor(state.categories, state.totalMoney, "all")
+    val options = remember {
+        val named = state.orderedCategoryNames()
+        if (unallocAlloc > 0 || named.isEmpty()) named + "__unallocated__" else named
+    }
+    // part = category to amount-text
+    val parts = remember {
+        mutableStateListOf(
+            options.first() to "",
+            options.getOrElse(1) { options.first() } to ""
+        )
+    }
+    var desc    by remember { mutableStateOf("") }
+    var dateStr by remember { mutableStateOf("") }            // "" = today
+    var menuFor by remember { mutableStateOf<Int?>(null) }
+
+    val amounts = parts.map { it.second.toDoubleOrNull() ?: 0.0 }
+    val total   = amounts.sum()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title  = { Text(t(tr,"split_expense"), color = th.fg, fontWeight = FontWeight.Bold) },
+        text   = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                parts.forEachIndexed { i, part ->
+                    Row(
+                        verticalAlignment     = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(Modifier.weight(1f)) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(1.dp, th.fg.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                                    .clickable { menuFor = i }
+                                    .padding(horizontal = 10.dp, vertical = 14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment     = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    catDisplay(part.first, tr),
+                                    color = th.fg, fontSize = 13.sp,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Icon(Icons.Default.ArrowDropDown, null, tint = th.fg, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(
+                                expanded         = menuFor == i,
+                                onDismissRequest = { menuFor = null },
+                                modifier         = Modifier.background(th.cardBg)
+                            ) {
+                                options.forEach { cat ->
+                                    DropdownMenuItem(
+                                        text    = { Text(catDisplay(cat, tr), color = th.fg) },
+                                        onClick = { parts[i] = cat to parts[i].second; menuFor = null }
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = part.second,
+                            onValueChange = { parts[i] = parts[i].first to it },
+                            label = { Text(t(tr,"amount"), fontSize = 11.sp) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true, colors = otfColors(th),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.width(104.dp)
+                        )
+                        if (parts.size > 2) {
+                            Box(
+                                Modifier
+                                    .size(26.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(kBad.copy(alpha = 0.12f))
+                                    .clickable { parts.removeAt(i) },
+                                contentAlignment = Alignment.Center
+                            ) { Text("×", color = kBad, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                        }
+                    }
+                }
+
+                if (parts.size < 6) {
+                    TextButton(onClick = { parts.add(options.first() to "") }) {
+                        Text("+ ${t(tr,"category")}", color = th.accent, fontSize = 13.sp)
+                    }
+                }
+
+                OutlinedTextField(
+                    value = desc, onValueChange = { desc = it },
+                    label = { Text(t(tr,"description")) },
+                    singleLine = true, colors = otfColors(th),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                DateField(
+                    value = dateStr, label = t(tr,"date"),
+                    langCode = state.language, th = th, tr = tr
+                ) { dateStr = it }
+
+                // Live total: "12.00 + 5.50 = 17.50 $"
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(th.accent.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        "${t(tr,"split_total")}: " +
+                            amounts.joinToString(" + ") { it.money() } +
+                            " = ${total.money()} $sym",
+                        fontSize   = 12.sp,
+                        color      = th.accent,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (amounts.any { it <= 0.0 }) return@TextButton   // every part needs an amount
+                val splitId = "s${System.currentTimeMillis()}"
+                parts.forEach { (cat, amtStr) ->
+                    state.recordExpense(cat, amtStr.toDoubleOrNull() ?: 0.0, desc, dateStr, splitId)
+                }
+                onDismiss()
+            }) { Text(t(tr,"ok"), color = th.accent, fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(t(tr,"cancel"), color = th.fg.copy(alpha = 0.6f)) }
+        },
+        containerColor = th.cardBg,
+        shape          = RoundedCornerShape(24.dp)
     )
 }

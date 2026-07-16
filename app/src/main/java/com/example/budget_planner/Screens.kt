@@ -70,9 +70,11 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
 
     val pExpSum      = pExp.sumOf { it.amount }
     val pIncSum      = pInc.sumOf { it.amount }
-    // v0.9.2: percent categories share what's left after fixed ones
-    val pctBase      = percentBase(state.categories, state.totalMoney)
-    val unallocAlloc = computeUnallocated(state.categories, state.totalMoney)
+    // v0.9.3: I follows the period filter — this month's / this year's income,
+    // or total money for "all time". NI = I - fixed, percents share NI by ratio.
+    val periodIncome = if (period == "all") state.totalMoney else pIncSum
+    val pctBase      = percentBaseFor(state.categories, periodIncome, period)
+    val unallocAlloc = computeUnallocatedFor(state.categories, periodIncome, period)
     val unallocSpent = state.categories["__unallocated__"]?.spent ?: 0.0
     val shownTotal   = animateMoney(state.totalMoney)
 
@@ -227,7 +229,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
                 CategoryCard(
                     name       = name,
                     modeStr    = modeStr,
-                    alloc      = cat.allocated(state.totalMoney, pctBase),
+                    alloc      = cat.allocatedFor(period, pctBase),
                     spent      = dispSpent,
                     sym        = sym,
                     th         = th,
@@ -270,7 +272,7 @@ fun HomeScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sym: 
         }
     }
     spendTarget?.let { target ->
-        SpendDialog(target, state, tr, th, sym) { spendTarget = null }
+        SpendDialog(target, state, tr, th, sym, period = period) { spendTarget = null }
     }
 }
 
@@ -504,7 +506,9 @@ fun HistoryScreen(state: AppState, th: AppThemeData, tr: Map<String, String>, sy
                     items(shownExp, key = { "e${it.first}" }) { (idx, exp) ->
                         HistoryRow(
                             title       = catDisplay(exp.category, tr),
-                            subtitle    = "${exp.description.ifBlank { "—" }} · ${exp.date}",
+                            // v0.9.3: parts of a split expense are marked with ⇄
+                            subtitle    = (if (exp.splitId.isNotBlank()) "⇄ " else "") +
+                                          "${exp.description.ifBlank { "—" }} · ${exp.date}",
                             amountText  = "−${exp.amount.money()} $sym",
                             amountColor = kBad,
                             th          = th,
@@ -811,12 +815,12 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
         item(key = "about") {
             AccordionSection(
                 title    = t(tr, "about"),
-                subtitle = "Flowi v0.9.2",
+                subtitle = "Flowi v0.9.3",
                 expanded = aboutExpanded,
                 th       = th,
                 onToggle = { aboutExpanded = !aboutExpanded }
             ) {
-                AboutContent(th, tr)
+                AboutContent(th, tr, flowiLogoRes(state.themeName))
             }
         }
 
@@ -857,7 +861,7 @@ fun SettingsScreen(state: AppState, th: AppThemeData, tr: Map<String, String>) {
 }
 
 @Composable
-fun AboutContent(th: AppThemeData, tr: Map<String, String>) {
+fun AboutContent(th: AppThemeData, tr: Map<String, String>, logoRes: Int) {
     val uriHandler = LocalUriHandler.current
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -869,16 +873,16 @@ fun AboutContent(th: AppThemeData, tr: Map<String, String>) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment     = Alignment.CenterVertically
         ) {
-            // v0.9.1: real app icon instead of the "F" placeholder
+            // v0.9.3: the avatar follows the theme (white icon on Matcha)
             Image(
-                painter            = painterResource(R.drawable.flowi_icon),
+                painter            = painterResource(logoRes),
                 contentDescription = null,
                 contentScale       = ContentScale.Crop,
                 modifier           = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
             )
             Column {
                 Text("Flowi", fontWeight = FontWeight.Bold, color = th.fg, fontSize = 17.sp)
-                Text("${t(tr,"version")} 0.9.2", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
+                Text("${t(tr,"version")} 0.9.3", fontSize = 12.sp, color = th.fg.copy(alpha = 0.5f))
             }
         }
 

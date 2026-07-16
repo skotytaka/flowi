@@ -27,15 +27,20 @@ data class Category(
     val kind: String = "spending" // v0.9.2: "spending" | "saving" (funds, investments)
 ) {
     /**
-     * v0.9.2: percentage categories no longer take a share of ALL money — they
-     * share [pctBase], i.e. what remains after fixed monthly/annual categories.
-     * That keeps their ratio to each other but never allocates more than exists.
+     * v0.9.3: allocations follow the period filter. [pctBase] is the income of
+     * the chosen period minus the fixed categories for that period (NI = I - R),
+     * so percentage categories keep their ratio and never exceed the income.
      */
-    fun allocated(totalMoney: Double, pctBase: Double = totalMoney): Double = when (mode) {
+    fun allocatedFor(period: String, pctBase: Double): Double = when (mode) {
         "percentage" -> pctBase * value / 100.0
-        "monthly"    -> value
-        "annual"     -> value / 12.0
-        else          -> 0.0
+        else          -> fixedFor(period)
+    }
+
+    /** What a fixed category costs within the given period ("all"|"month"|"year"). */
+    fun fixedFor(period: String): Double = when (mode) {
+        "monthly" -> if (period == "year") value * 12.0 else value
+        "annual"  -> if (period == "year") value else value / 12.0
+        else       -> 0.0
     }
 
     fun toJsonObject() = JSONObject().apply {
@@ -73,18 +78,21 @@ data class Expense(
     val category: String,
     val amount: Double,
     val description: String,
-    val date: String
+    val date: String,
+    val splitId: String = ""   // v0.9.3: parts of one split expense share an id
 ) {
     fun toJsonObject() = JSONObject().apply {
         put("category", category); put("amount", amount)
         put("description", description); put("date", date)
+        if (splitId.isNotBlank()) put("split_id", splitId)
     }
     companion object {
         fun fromJsonObject(json: JSONObject) = Expense(
             category    = json.optString("category", ""),
             amount      = json.optDouble("amount", 0.0),
             description = json.optString("description", ""),
-            date        = json.optString("date", "")
+            date        = json.optString("date", ""),
+            splitId     = json.optString("split_id", "")
         )
     }
 }
@@ -116,7 +124,7 @@ class AppState(
     expenses: List<Expense> = emptyList(),
     incomes: List<Income> = emptyList(),
     language: String = "en",
-    themeName: String = "black",
+    themeName: String = "matcha",   // v0.9.3: white-green is the main theme
     currency: String = "Dollar",
     monthResetDay: Int = 1,
     categoryOrder: List<String> = emptyList(),
@@ -176,7 +184,7 @@ class AppState(
                 incomes    = incs.map { i -> i.copy(date = normalizeDate(i.date) ?: i.date) },
                 language   = j.optString("language", "en"),
                 // v0.9.1: "white"/"hacker" themes were removed — migrate to matcha
-                themeName  = j.optString("theme", "black")
+                themeName  = j.optString("theme", "matcha")
                     .let { if (it == "white" || it == "hacker") "matcha" else it },
                 currency   = j.optString("currency", "Dollar"),
                 monthResetDay = j.optInt("month_reset_day", 1).coerceIn(1, 31),
@@ -198,13 +206,16 @@ fun AppState.recordIncome(source: String, amount: Double, date: String) {
     incomes.add(Income(source.ifBlank { "N/A" }, amount, normalizeDate(date) ?: todayStr()))
 }
 
-fun AppState.recordExpense(target: String, amount: Double, description: String, date: String) {
+fun AppState.recordExpense(
+    target: String, amount: Double, description: String, date: String,
+    splitId: String = ""
+) {
     if (amount <= 0) return
     val prev = categories[target]?.spent ?: 0.0
     categories[target] = (categories[target]
         ?: Category(target, 0.0, "unallocated", false, 0.0))
         .copy(spent = prev + amount)
-    expenses.add(Expense(target, amount, description, normalizeDate(date) ?: todayStr()))
+    expenses.add(Expense(target, amount, description, normalizeDate(date) ?: todayStr(), splitId))
 }
 
 fun AppState.updateExpense(idx: Int, newCat: String, newAmt: Double, newDesc: String, newDate: String) {
@@ -397,20 +408,22 @@ fun filterByPeriod(date: String, period: String, monthResetDay: Int = 1): Boolea
 }
 
 /**
- * v0.9.2: fixed monthly/annual categories are funded first; percentage
- * categories then share what is left, preserving their ratio to each other.
- * Example: income 1000, rent fixed 600, percents 20/20/60 → they get 80/80/240.
+ * v0.9.3 math, exactly the user's formula: x+y+z = 100%, I = income of the
+ * selected period (this month / this year / all time), R = fixed categories,
+ * NI = I - R, and every percentage category gets NI * x/100 — ratio preserved,
+ * and R + all percentage allocations = I when percentages sum to 100.
+ * Example: I=1000, R=600 rent, 20/30/50 → 80/120/200.
  */
-fun percentBase(categories: Map<String, Category>, totalMoney: Double): Double {
+fun percentBaseFor(categories: Map<String, Category>, income: Double, period: String): Double {
     val fixed = categories.values
-        .filter { it.name != "__unallocated__" && (it.mode == "monthly" || it.mode == "annual") }
-        .sumOf { if (it.mode == "monthly") it.value else it.value / 12.0 }
-    return (totalMoney - fixed).coerceAtLeast(0.0)
+        .filter { it.name != "__unallocated__" && it.mode != "percentage" }
+        .sumOf { it.fixedFor(period) }
+    return (income - fixed).coerceAtLeast(0.0)
 }
 
-fun computeUnallocated(categories: Map<String, Category>, totalMoney: Double): Double {
-    val base = percentBase(categories, totalMoney)
+fun computeUnallocatedFor(categories: Map<String, Category>, income: Double, period: String): Double {
+    val base = percentBaseFor(categories, income, period)
     val used = categories.filter { it.key != "__unallocated__" }.values
-        .sumOf { it.allocated(totalMoney, base) }
-    return (totalMoney - used).coerceAtLeast(0.0)
+        .sumOf { it.allocatedFor(period, base) }
+    return (income - used).coerceAtLeast(0.0)
 }
